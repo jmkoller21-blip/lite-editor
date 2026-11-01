@@ -11,8 +11,22 @@ Newest at the bottom. One line per step, big or small. Update and push after eve
 - 2026-10-28: first successful Windows build. Release `build-4` has `Lite.Editor_0.1.0_x64-setup.exe` (about 97 MB, NSIS, unsigned). **Do not use it**: `ui/main.js` and several UI modules were never committed, so that build opens to a blank window.
 - 2026-10-28/30: wrote the missing UI modules (`main.js`, `ui.js`, `library.js`, `props.js`, `panels.js`): home screen, new-project dialog, transport, shortcuts, settings, media/stock/text/transitions/filters/audio panels, properties panel, export dialog, SRT import, voiceover recording.
 
+## RESUME HERE (read this first)
+Build 9 (commit 46bb5a9) ran the new Windows acceptance test. Result: **install, startup, window, import, encoder detection and uninstall all PASS on Windows; EXPORT FAILS.** Fixes in progress:
+1. **Export broken on Windows.** The bundled FFmpeg (BtbN master, 2026) no longer has `-filter_complex_script`: "Unrecognized option". Fix: in `engine/src/export.rs::run`, detect at runtime whether `-/filter_complex <file>` works (FFmpeg 7+) and use it, else fall back to `-filter_complex_script` (older FFmpeg, e.g. the Linux 6.1 here). Cache the detection.
+2. **Engine tests fail on Windows** (`tests/export_it.rs`, `tests/server_it.rs`): they call `ffmpeg` from PATH (not found on the runner), hard-code libx264 (absent in the LGPL build) and Linux font paths. Fix: use `Ff::locate()`, pick `libx264` if available else `mpeg4`/`pick_encoder`, fonts from `../ui/fonts` via `CARGO_MANIFEST_DIR`. NOTE `cargo test` stops at the first failing test file, so `server_it` has not yet run on Windows.
+3. Add a preview-proxy check to the CI acceptance test (import a 1080p or non-browser-friendly clip, wait for the proxy job, ffprobe the result). Proxy encoders on Windows will be `h264_mf` (usable encoders on the runner: h264_mf, libopenh264, mpeg4, libvpx).
+Then: push, wait for CI, read the release body. Only when it says `ACCEPTANCE: PASS` and engine tests pass, send the installer to the user.
+
+### Windows numbers from build 9 (real, from the runner)
+- Silent install OK, installed size 270 MB, installer 91 MB.
+- Installed app answers on its local port in 0.6 s; window title "Lite Editor" opens.
+- Idle memory: app 30 MB + WebView2 six processes 289 MB = about 319 MB total (target was under 300 MB; WebView2 dominates).
+- Usable video encoders on the runner: h264_mf, libopenh264, mpeg4, libvpx.
+- Uninstall exits 0 and removes the files.
+
 ## In progress
-- CI now also runs a Windows acceptance test (`tools/ci-smoke.ps1`): silent install, start the installed app in test mode (`LITE_TEST_PORT` / `LITE_TEST_TOKEN`), engine API import + export, memory readout, uninstall. Results are written into the release body (`gh api repos/jmkoller21-blip/lite-editor/releases --jq '.[0].body'`). Read it before handing any installer to the user.
+- Applying fixes 1 to 3 above.
 
 ## Verified so far
 - Linux, headless Chromium + real engine (`tools/smoke-ui.js`): full flow passes, no console errors. Export is 1280x720 H.264 + AAC, 6 s, frames not black.
@@ -27,6 +41,7 @@ Newest at the bottom. One line per step, big or small. Update and push after eve
 4. Old release `build-4` is the broken blank-window build. This session cannot edit or delete releases; user should delete it.
 
 ## Log
+- 2026-11-01: saved the Windows CI findings (this section) before starting the fixes.
 - 2026-10-30: verified build-8 installer contents; measured engine memory; wrote the Windows CI acceptance test and test hook in `src-tauri/src/main.rs`; release body now carries the CI report.
 - 2026-10-30: widened timeline track headers (labels were wrapping). Added a CI `concurrency` group so a newer push cancels the older build. Release `build-4` is the broken blank-window build; this session cannot edit releases, so the user should delete it or ignore it.
 - 2026-10-30: added `tools/smoke-ui.js` (headless Chromium end-to-end test). Found and fixed one bug (media tab rendered before a project was open). Full flow passes: import, timeline, split, undo/redo, text, transition, filter, stock, playback, export (1280x720 H.264+AAC, 6 s, frames not black), reopen.
