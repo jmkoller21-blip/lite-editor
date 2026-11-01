@@ -12,6 +12,8 @@ Newest at the bottom. One line per step, big or small. Update and push after eve
 - 2026-10-28/30: wrote the missing UI modules (`main.js`, `ui.js`, `library.js`, `props.js`, `panels.js`): home screen, new-project dialog, transport, shortcuts, settings, media/stock/text/transitions/filters/audio panels, properties panel, export dialog, SRT import, voiceover recording.
 
 ## RESUME HERE (read this first)
+STATUS 2026-11-01: build-10 passed the Windows acceptance test. Installer is deliverable (release build-10). Remaining: confirm build-11 engine tests green, then open items below.
+(Older notes follow.)
 Build 9 (commit 46bb5a9) ran the new Windows acceptance test. Result: **install, startup, window, import, encoder detection and uninstall all PASS on Windows; EXPORT FAILS.** Fixes in progress:
 1. **Export broken on Windows.** The bundled FFmpeg (BtbN master, 2026) no longer has `-filter_complex_script`: "Unrecognized option". Fix: in `engine/src/export.rs::run`, detect at runtime whether `-/filter_complex <file>` works (FFmpeg 7+) and use it, else fall back to `-filter_complex_script` (older FFmpeg, e.g. the Linux 6.1 here). Cache the detection.
 2. **Engine tests fail on Windows** (`tests/export_it.rs`, `tests/server_it.rs`): they call `ffmpeg` from PATH (not found on the runner), hard-code libx264 (absent in the LGPL build) and Linux font paths. Fix: use `Ff::locate()`, pick `libx264` if available else `mpeg4`/`pick_encoder`, fonts from `../ui/fonts` via `CARGO_MANIFEST_DIR`. NOTE `cargo test` stops at the first failing test file, so `server_it` has not yet run on Windows.
@@ -41,6 +43,7 @@ Then: push, wait for CI, read the release body. Only when it says `ACCEPTANCE: P
 4. Old release `build-4` is the broken blank-window build. This session cannot edit or delete releases; user should delete it.
 
 ## Log
+- 2026-11-01: build-10 (e5af6ac) ACCEPTANCE: PASS on Windows (install, export h264+aac, preview copy, uninstall; idle total 46 MB at that moment). Only 2 engine tests failed on Windows (backslash paths in test JSON); fixed, pushed as build-11. Installer asset on release build-10 is usable.
 - 2026-11-01: export now probes for `-/filter_complex` vs `-filter_complex_script`; tests made portable (Ff::locate, working H.264 encoder, repo fonts); CI acceptance test gained a preview-copy (proxy) check.
 - 2026-11-01: saved the Windows CI findings (this section) before starting the fixes.
 - 2026-10-30: verified build-8 installer contents; measured engine memory; wrote the Windows CI acceptance test and test hook in `src-tauri/src/main.rs`; release body now carries the CI report.

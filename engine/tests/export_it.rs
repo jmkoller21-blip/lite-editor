@@ -30,7 +30,7 @@ fn gen(dir: &Path, name: &str, src: &str, secs: u32, audio: bool) -> String {
     }
     c.args(["-c:v", &vcodec(), "-pix_fmt", "yuv420p"]).arg(&path);
     assert!(c.status().unwrap().success());
-    path.to_string_lossy().to_string()
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn fonts() -> (String, String) {
@@ -109,7 +109,7 @@ fn png(dir: &Path, name: &str) -> String {
     let path = dir.join(name);
     let st = Ff::locate().command("ffmpeg").args(["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=green:s=320x180:d=1", "-frames:v", "1"]).arg(&path).status().unwrap();
     assert!(st.success());
-    path.to_string_lossy().to_string()
+    path.to_string_lossy().replace('\\', "/")
 }
 
 #[test]
