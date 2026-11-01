@@ -451,6 +451,32 @@ pub fn pick_encoder(ff: &Ff, wanted: &str) -> Result<String, String> {
         .ok_or_else(|| "no video encoder is available in the bundled FFmpeg".to_string())
 }
 
+static SLASH_SYNTAX: Mutex<Option<bool>> = Mutex::new(None);
+
+/// FFmpeg 7+ replaced `-filter_complex_script <file>` with `-/filter_complex <file>`, and newer builds
+/// drop the old option entirely. Older builds only know the old one. Ask the bundled FFmpeg once.
+fn uses_slash_syntax(ff: &Ff, work_dir: &Path) -> bool {
+    if let Some(v) = *SLASH_SYNTAX.lock().unwrap() {
+        return v;
+    }
+    let probe = work_dir.join(format!("probe_{}.txt", unique()));
+    let ok = std::fs::write(&probe, "color=c=black:s=16x16:d=0.1[o]").is_ok()
+        && ff
+            .ffmpeg()
+            .arg("-/filter_complex")
+            .arg(&probe)
+            .args(["-map", "[o]", "-f", "null", "-"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    let _ = std::fs::remove_file(&probe);
+    *SLASH_SYNTAX.lock().unwrap() = Some(ok);
+    ok
+}
+
 /// Runs the plan. Blocks until finished, cancelled or failed.
 pub fn run(ff: &Ff, plan: &Plan, out_path: &str, work_dir: &Path, prog: &Progress) -> Result<(), String> {
     std::fs::create_dir_all(work_dir).ok();
@@ -462,7 +488,7 @@ pub fn run(ff: &Ff, plan: &Plan, out_path: &str, work_dir: &Path, prog: &Progres
     let mut cmd = ff.ffmpeg();
     cmd.args(["-y", "-progress", "pipe:1", "-nostats"]);
     cmd.args(&plan.input_args);
-    cmd.arg("-filter_complex_script").arg(&script_path);
+    cmd.arg(if uses_slash_syntax(ff, work_dir) { "-/filter_complex" } else { "-filter_complex_script" }).arg(&script_path);
     cmd.args(&plan.out_args);
     // keep the partial file's extension so ffmpeg picks the right muxer
     let fmt = match ext.to_ascii_lowercase().as_str() {

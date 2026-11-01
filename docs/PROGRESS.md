@@ -26,7 +26,7 @@ Then: push, wait for CI, read the release body. Only when it says `ACCEPTANCE: P
 - Uninstall exits 0 and removes the files.
 
 ## In progress
-- Applying fixes 1 to 3 above.
+- Fixes 1 to 3 are WRITTEN and the 16 engine tests pass on Linux (old-syntax fallback path). The new `-/filter_complex` path can only be proven on Windows CI. Next: push, wait for the build, read the release body.
 
 ## Verified so far
 - Linux, headless Chromium + real engine (`tools/smoke-ui.js`): full flow passes, no console errors. Export is 1280x720 H.264 + AAC, 6 s, frames not black.
@@ -41,6 +41,7 @@ Then: push, wait for CI, read the release body. Only when it says `ACCEPTANCE: P
 4. Old release `build-4` is the broken blank-window build. This session cannot edit or delete releases; user should delete it.
 
 ## Log
+- 2026-11-01: export now probes for `-/filter_complex` vs `-filter_complex_script`; tests made portable (Ff::locate, working H.264 encoder, repo fonts); CI acceptance test gained a preview-copy (proxy) check.
 - 2026-11-01: saved the Windows CI findings (this section) before starting the fixes.
 - 2026-10-30: verified build-8 installer contents; measured engine memory; wrote the Windows CI acceptance test and test hook in `src-tauri/src/main.rs`; release body now carries the CI report.
 - 2026-10-30: widened timeline track headers (labels were wrapping). Added a CI `concurrency` group so a newer push cancels the older build. Release `build-4` is the broken blank-window build; this session cannot edit releases, so the user should delete it or ignore it.

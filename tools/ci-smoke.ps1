@@ -100,6 +100,27 @@ try {
   $item = $imp.items[0]
   Check ((-not $item.error) -and ($item.kind -eq 'video')) 'import reads the clip' ([string]$item.error)
 
+  # ---- a big clip in a codec browsers cannot play needs a preview copy (proxy)
+  $big = Join-Path $env:TEMP 'ci-big.mp4'
+  & $ff -hide_banner -loglevel error -y -f lavfi -i 'testsrc2=s=1920x1080:r=30:d=2' -c:v mpeg4 -q:v 5 -an $big
+  $bi = (Api 'media_import' @{ paths = @($big) }).items[0]
+  Check ((-not $bi.error) -and [bool]$bi.proxy_job) 'big clip gets a preview-copy job' ([string]$bi.error)
+  if ($bi.proxy_job) {
+    $pst = $null
+    for ($i = 0; $i -lt 90; $i++) {
+      Start-Sleep -Seconds 1
+      $pst = Api 'job_status' @{ id = $bi.proxy_job }
+      if ($pst.state -ne 'running') { break }
+    }
+    Check ($pst.state -eq 'done') 'preview copy is made' ('state=' + $pst.state + ' ' + [string]$pst.message)
+    if ($pst.state -eq 'done') {
+      $pp = [string]$pst.result.proxy
+      $pinfo = & $fp -v error -show_entries stream=codec_name,height -of csv=p=0 $pp
+      Log ('preview copy: ' + (@($pinfo) -join ' | ') + ' (' + [math]::Round((Get-Item $pp).Length / 1KB, 0) + ' KB)')
+      Check ((@($pinfo) -join ' ') -match 'h264|vp8') 'preview copy is browser-playable'
+    }
+  }
+
   $doc = Api 'project_new' @{ name = 'ci'; width = 640; height = 360; fps = 30 }
   $adj = [pscustomobject]@{ brightness = 0; contrast = 1; saturation = 1; hue = 0; warmth = 0; blur = 0 }
   $doc.media = @($item)

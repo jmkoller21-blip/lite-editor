@@ -5,6 +5,16 @@ use engine::model::Project;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// An H.264 encoder that really works on this machine (libx264 on Linux; h264_mf or openh264 on Windows).
+fn vcodec() -> String {
+    Ff::locate().usable_h264_encoders().into_iter().find(|e| e != "mpeg4").unwrap_or_else(|| "mpeg4".to_string())
+}
+
+/// The repo's bundled fonts, found relative to this crate so it works on any OS.
+fn font_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("ui").join("fonts")
+}
+
 fn work() -> PathBuf {
     let d = std::env::temp_dir().join(format!("lite-engine-test-{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
@@ -13,29 +23,28 @@ fn work() -> PathBuf {
 
 fn gen(dir: &Path, name: &str, src: &str, secs: u32, audio: bool) -> String {
     let path = dir.join(name);
-    let mut c = Command::new("ffmpeg");
+    let mut c = Ff::locate().command("ffmpeg");
     c.args(["-y", "-v", "error", "-f", "lavfi", "-i", &format!("{}:s=640x360:r=30:d={}", src, secs)]);
     if audio {
         c.args(["-f", "lavfi", "-i", &format!("sine=frequency=440:d={}", secs), "-c:a", "aac", "-shortest"]);
     }
-    c.args(["-c:v", "libx264", "-pix_fmt", "yuv420p"]).arg(&path);
+    c.args(["-c:v", &vcodec(), "-pix_fmt", "yuv420p"]).arg(&path);
     assert!(c.status().unwrap().success());
     path.to_string_lossy().to_string()
 }
 
 fn fonts() -> (String, String) {
-    let r = "/usr/share/fonts/opentype/inter/Inter-Regular.otf".to_string();
-    let b = "/usr/share/fonts/opentype/inter/Inter-Bold.otf".to_string();
-    (r, b)
+    let d = font_dir();
+    (d.join("Inter-Regular.otf").to_string_lossy().to_string(), d.join("Inter-Bold.otf").to_string_lossy().to_string())
 }
 
 fn settings(out: &str, dir: &Path) -> Settings {
     let (r, b) = fonts();
-    Settings { path: out.into(), width: 640, height: 360, fps: 30.0, quality: "medium".into(), encoder: "libx264".into(), audio_only: false, font_regular: r, font_bold: b, work_dir: dir.to_path_buf() }
+    Settings { path: out.into(), width: 640, height: 360, fps: 30.0, quality: "medium".into(), encoder: vcodec(), audio_only: false, font_regular: r, font_bold: b, work_dir: dir.to_path_buf() }
 }
 
 fn pixel(video: &str, t: f64, x: u32, y: u32) -> (u8, u8, u8) {
-    let out = Command::new("ffmpeg")
+    let out = Ff::locate().command("ffmpeg")
         .args(["-v", "error", "-ss", &format!("{}", t), "-i", video, "-frames:v", "1", "-vf", &format!("format=rgb24,crop=1:1:{}:{}", x, y), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
         .output().unwrap();
     assert_eq!(out.stdout.len(), 3, "could not read pixel at {}s", t);
@@ -98,7 +107,7 @@ fn run_export(p: &Project, dir: &Path, name: &str, audio_only: bool) -> Result<S
 
 fn png(dir: &Path, name: &str) -> String {
     let path = dir.join(name);
-    let st = Command::new("ffmpeg").args(["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=green:s=320x180:d=1", "-frames:v", "1"]).arg(&path).status().unwrap();
+    let st = Ff::locate().command("ffmpeg").args(["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=green:s=320x180:d=1", "-frames:v", "1"]).arg(&path).status().unwrap();
     assert!(st.success());
     path.to_string_lossy().to_string()
 }
@@ -110,7 +119,7 @@ fn every_effect_and_transition_builds_and_runs() {
     let blue = gen(&dir, "b2.mp4", "color=c=blue", 4, true);
     let img = png(&dir, "g.png");
     let tone = dir.join("tone.wav").to_string_lossy().to_string();
-    assert!(Command::new("ffmpeg").args(["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=880:d=3", &tone]).status().unwrap().success());
+    assert!(Ff::locate().command("ffmpeg").args(["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=880:d=3", &tone]).status().unwrap().success());
 
     for tr in ["dissolve", "slide-left", "slide-right", "slide-up", "zoom"] {
         let j = format!(r##"{{

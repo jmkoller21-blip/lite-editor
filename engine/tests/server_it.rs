@@ -1,10 +1,21 @@
 use engine::cmd::Paths;
+use engine::ff::Ff;
 use engine::json::Json;
 use engine::server::{self, url_encode, Handle};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// An H.264 encoder that really works on this machine (libx264 on Linux; h264_mf or openh264 on Windows).
+fn vcodec() -> String {
+    Ff::locate().usable_h264_encoders().into_iter().find(|e| e != "mpeg4").unwrap_or_else(|| "mpeg4".to_string())
+}
+
+/// The repo's bundled fonts, found relative to this crate so it works on any OS.
+fn font_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("ui").join("fonts")
+}
 
 fn tmp(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("lite-srv-{}-{}", name, engine::store::new_id()));
@@ -43,7 +54,7 @@ fn setup() -> (Handle, PathBuf) {
     std::fs::write(ui.join("js/a.js"), "1").unwrap();
     let stock = tmp("stock");
     let data = tmp("data");
-    let paths = Paths { data_dir: data, ui_dir: ui, stock_dir: stock, font_dir: PathBuf::from("/usr/share/fonts/opentype/inter"), ffmpeg_dir: None };
+    let paths = Paths { data_dir: data, ui_dir: ui, stock_dir: stock, font_dir: font_dir(), ffmpeg_dir: None };
     let h = server::start(paths, 0, Some("tok123".into())).unwrap();
     (h, tmp("media"))
 }
@@ -60,7 +71,7 @@ fn ok(j: &Json) -> &Json {
 }
 
 fn gen(path: &Path, vf: &str, extra: &[&str]) {
-    let mut c = Command::new("ffmpeg");
+    let mut c = Ff::locate().command("ffmpeg");
     c.args(["-y", "-v", "error", "-f", "lavfi", "-i", vf, "-f", "lavfi", "-i", "sine=frequency=330:d=3", "-shortest"]);
     c.args(extra).arg(path);
     assert!(c.status().unwrap().success());
@@ -139,13 +150,13 @@ fn import_proxy_range_waveform_export() {
 
     // a small H.264 clip: plays directly, no proxy. A 1080p clip and an AVI: need proxies.
     let small = media.join("small.mp4");
-    gen(&small, "testsrc=s=640x360:r=30:d=3", &["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac"]);
+    gen(&small, "testsrc=s=640x360:r=30:d=3", &["-c:v", &vcodec(), "-pix_fmt", "yuv420p", "-c:a", "aac"]);
     let big = media.join("big.mp4");
-    gen(&big, "testsrc2=s=1920x1080:r=30:d=3", &["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac"]);
+    gen(&big, "testsrc2=s=1920x1080:r=30:d=3", &["-c:v", &vcodec(), "-pix_fmt", "yuv420p", "-c:a", "aac"]);
     let avi = media.join("old name (1).avi");
     gen(&avi, "testsrc=s=320x240:r=25:d=3", &["-c:v", "mpeg4", "-c:a", "mp3"]);
     let wav = media.join("tone.wav");
-    assert!(Command::new("ffmpeg").args(["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=500:d=2"]).arg(&wav).status().unwrap().success());
+    assert!(Ff::locate().command("ffmpeg").args(["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=500:d=2"]).arg(&wav).status().unwrap().success());
     let notmedia = media.join("notes.txt");
     std::fs::write(&notmedia, "hello").unwrap();
 
@@ -174,7 +185,7 @@ fn import_proxy_range_waveform_export() {
         assert_eq!(d.str_or("state", ""), "done", "{}: {}", name, d.str_or("message", ""));
         let proxy = d.get("result").unwrap().str_or("proxy", "");
         assert!(Path::new(&proxy).exists());
-        let pi = Command::new("ffprobe").args(["-v", "error", "-show_entries", "stream=codec_name,height", "-of", "compact", &proxy]).output().unwrap();
+        let pi = Ff::locate().command("ffprobe").args(["-v", "error", "-show_entries", "stream=codec_name,height", "-of", "compact", &proxy]).output().unwrap();
         let txt = String::from_utf8_lossy(&pi.stdout).to_string();
         assert!(txt.contains("h264") || txt.contains("vp8"), "proxy codec: {}", txt);
         // the proxy is served with range support
@@ -227,7 +238,7 @@ fn import_proxy_range_waveform_export() {
     let d = wait_job(&h, &job);
     assert_eq!(d.str_or("state", ""), "done", "{}", d.str_or("message", ""));
     assert!(out.exists());
-    let pi = Command::new("ffprobe").args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]).arg(&out).output().unwrap();
+    let pi = Ff::locate().command("ffprobe").args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]).arg(&out).output().unwrap();
     let dur: f64 = String::from_utf8_lossy(&pi.stdout).trim().parse().unwrap();
     assert!((dur - 3.0).abs() < 0.2, "export duration {}", dur);
     // cancel a second export immediately
