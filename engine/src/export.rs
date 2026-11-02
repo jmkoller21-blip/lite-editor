@@ -197,10 +197,12 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                         // zoom-in transition scales per frame; otherwise the static user scale
                         let user_scale = c.scale;
                         let zoom = wn.trans.filter(|t| t.kind == "zoom");
+                        let mut zoom_scale = String::new();
                         if let Some(t) = zoom {
+                            // applied last in the chain: newer FFmpeg refuses a size change before fade/tpad
                             let d = t.dur.min(c.dur) as f64 / 1e6;
                             let _ = write!(
-                                f,
+                                zoom_scale,
                                 "scale=w='max(2,trunc(iw*{:.5}*(0.5+0.5*min(1,t/{:.4}))/2)*2)':h='max(2,trunc(ih*{:.5}*(0.5+0.5*min(1,t/{:.4}))/2)*2)':eval=frame,",
                                 user_scale, d, user_scale, d
                             );
@@ -217,7 +219,12 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                         let a = &c.adj;
                         if !a.is_identity() {
                             if (a.brightness).abs() > 0.001 || (a.contrast - 1.0).abs() > 0.001 || (a.saturation - 1.0).abs() > 0.001 {
-                                let _ = write!(f, "eq=brightness={:.4}:contrast={:.4}:saturation={:.4},", a.brightness, a.contrast, a.saturation);
+                                // the LGPL FFmpeg build has no `eq`; lutyuv + hue give the same result
+                                let _ = write!(
+                                    f,
+                                    "format=yuv420p,lutyuv=y='clip((val-128)*{:.4}+128+{:.4},0,255)',hue=s={:.4},",
+                                    a.contrast, a.brightness * 255.0, a.saturation
+                                );
                             }
                             if a.hue.abs() > 0.01 {
                                 let _ = write!(f, "hue=h={:.3},", a.hue);
@@ -228,7 +235,7 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                             }
                             if a.blur >= 0.5 {
                                 let r = (a.blur * k).clamp(1.0, 40.0);
-                                let _ = write!(f, "boxblur=luma_radius={:.1}:luma_power=2:chroma_radius={:.1}:chroma_power=2,", r, (r / 2.0).max(1.0));
+                                let _ = write!(f, "gblur=sigma={:.1}:steps=2,", (r / 1.5).max(0.5));
                             }
                         }
                         f.push_str("format=rgba,");
@@ -248,6 +255,7 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                         if wn.tail > 0 {
                             let _ = write!(f, "tpad=stop_mode=clone:stop_duration={},", secs(wn.tail));
                         }
+                        f.push_str(&zoom_scale);
                         let _ = write!(f, "setpts=PTS+{}/TB[v{}];\n", secs(wn.start), idx);
                         g.push_str(&f);
 
@@ -546,6 +554,9 @@ pub fn run(ff: &Ff, plan: &Plan, out_path: &str, work_dir: &Path, prog: &Progres
     }
     let status = child.wait().map_err(|e| e.to_string())?;
     let _ = err_thread.join();
+    if std::env::var("LITE_DEBUG_EXPORT").is_ok() && !status.success() {
+        eprintln!("--- script ---\n{}\n--- log ---\n{}", std::fs::read_to_string(&script_path).unwrap_or_default(), err_buf.lock().unwrap());
+    }
     let _ = std::fs::remove_file(&script_path);
     for f in &plan.files {
         let _ = std::fs::remove_file(f);

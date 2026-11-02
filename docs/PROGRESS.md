@@ -12,7 +12,7 @@ Newest at the bottom. One line per step, big or small. Update and push after eve
 - 2026-10-28/30: wrote the missing UI modules (`main.js`, `ui.js`, `library.js`, `props.js`, `panels.js`): home screen, new-project dialog, transport, shortcuts, settings, media/stock/text/transitions/filters/audio panels, properties panel, export dialog, SRT import, voiceover recording.
 
 ## RESUME HERE (read this first)
-STATUS 2026-11-01: build-10 passed the Windows acceptance test. Installer is deliverable (release build-10). Remaining: confirm build-11 engine tests green, then open items below.
+STATUS 2026-11-01: build-10 passed acceptance but has bugs in zoom/brightness/contrast/saturation/blur exports (fixed in build-12). Next: read build-12 report, make sure acceptance covers an adjustment+zoom export, deliver build-12 installer, then open items.
 (Older notes follow.)
 Build 9 (commit 46bb5a9) ran the new Windows acceptance test. Result: **install, startup, window, import, encoder detection and uninstall all PASS on Windows; EXPORT FAILS.** Fixes in progress:
 1. **Export broken on Windows.** The bundled FFmpeg (BtbN master, 2026) no longer has `-filter_complex_script`: "Unrecognized option". Fix: in `engine/src/export.rs::run`, detect at runtime whether `-/filter_complex <file>` works (FFmpeg 7+) and use it, else fall back to `-filter_complex_script` (older FFmpeg, e.g. the Linux 6.1 here). Cache the detection.
@@ -43,6 +43,7 @@ Then: push, wait for CI, read the release body. Only when it says `ACCEPTANCE: P
 4. Old release `build-4` is the broken blank-window build. This session cannot edit or delete releases; user should delete it.
 
 ## Log
+- 2026-11-01 (evening): build-11 engine tests found REAL bugs by running the bundled LGPL FFmpeg: (a) zoom transition crashed (new fade refuses size change; zoom scale now last in chain), (b) `eq` and `boxblur` filters do not exist in the LGPL build, so brightness/contrast/saturation/blur exports would have failed; replaced with lutyuv+hue and gblur. Local test trick: download BtbN linux64 lgpl build from github releases to /tmp/newff and run tests with LITE_FFMPEG_DIR. All 16 tests pass on old (6.1) and new (2026) FFmpeg. Added LITE_DEBUG_EXPORT=1 env to print the filter script and ffmpeg log on failure. Pushed as build-12; the build-10 installer has the eq/blur/zoom bug, so the next installer to ship is build-12 or later.
 - 2026-11-01: build-10 (e5af6ac) ACCEPTANCE: PASS on Windows (install, export h264+aac, preview copy, uninstall; idle total 46 MB at that moment). Only 2 engine tests failed on Windows (backslash paths in test JSON); fixed, pushed as build-11. Installer asset on release build-10 is usable.
 - 2026-11-01: export now probes for `-/filter_complex` vs `-filter_complex_script`; tests made portable (Ff::locate, working H.264 encoder, repo fonts); CI acceptance test gained a preview-copy (proxy) check.
 - 2026-11-01: saved the Windows CI findings (this section) before starting the fixes.
