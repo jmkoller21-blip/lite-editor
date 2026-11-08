@@ -87,6 +87,8 @@ pub struct Clip {
     pub speed: f64,
     /// speed curve: (position along the clip 0..1, speed), linear between points
     pub curve: Option<Vec<(f64, f64)>>,
+    /// matte video from background removal (used as the clip's transparency)
+    pub cutout: Option<String>,
     pub x: f64,
     pub y: f64,
     pub scale: f64,
@@ -265,6 +267,7 @@ impl Project {
                     src_in: c.i64_or("in", 0).max(0),
                     speed: c.f64_or("speed", 1.0).clamp(0.1, 16.0),
                     curve: parse_curve(c),
+                    cutout: c.get("cutout").and_then(|m| m.as_str()).filter(|m| !m.is_empty()).map(|m| m.to_string()),
                     x: c.f64_or("x", 0.0),
                     y: c.f64_or("y", 0.0),
                     scale: c.f64_or("scale", 1.0).clamp(0.01, 20.0),

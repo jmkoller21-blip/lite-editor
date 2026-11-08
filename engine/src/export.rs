@@ -220,15 +220,35 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                         }
                     }
                     n_inputs += 1;
+                    // background removal: the matte video is a second input, cut exactly like the footage
+                    let mut mask_idx: Option<usize> = None;
+                    if let (Some(mp), MediaKind::Video, false) = (c.cutout.as_ref(), m.kind, s.audio_only) {
+                        inputs.extend([
+                            "-ss".into(), secs(wn.src_in), "-t".into(), secs(src_len + 100_000),
+                            "-i".into(), mp.clone(),
+                        ]);
+                        mask_idx = Some(n_inputs);
+                        n_inputs += 1;
+                    }
 
                     // ---- video chain
                     if m.kind != MediaKind::Audio && !s.audio_only && !track.hidden {
                         let mut f = String::new();
-                        if let Some(segs) = curve_segs(c, &wn) {
-                            let _ = write!(f, "[{}:v]setpts=PTS-STARTPTS,{},fps={:.4},", idx, curve_setpts(&segs), fps);
+                        let retime = match curve_segs(c, &wn) {
+                            Some(segs) => format!("setpts=PTS-STARTPTS,{}", curve_setpts(&segs)),
+                            None => format!("setpts=(PTS-STARTPTS)/{:.6}", c.speed),
+                        };
+                        if let Some(mi) = mask_idx {
+                            let _ = write!(
+                                g,
+                                "[{i}:v]{r},fps={fps:.4}[cv{i}];\n[{m}:v]{r},fps={fps:.4},format=gray[cm{i}];\n[cm{i}][cv{i}]scale2ref=flags=bilinear[cs{i}][cr{i}];\n[cr{i}][cs{i}]alphamerge[cx{i}];\n",
+                                i = idx, m = mi, r = retime, fps = fps
+                            );
+                            let _ = write!(f, "[cx{}]", idx);
                         } else {
-                            let _ = write!(f, "[{}:v]setpts=(PTS-STARTPTS)/{:.6},fps={:.4},", idx, c.speed, fps);
+                            let _ = write!(f, "[{}:v]{},fps={:.4},", idx, retime, fps);
                         }
+                        let (yuv_fmt, gbr_fmt) = if mask_idx.is_some() { ("yuva420p", "gbrap") } else { ("yuv420p", "gbrp") };
                         let _ = write!(f, "scale={}:{}:force_original_aspect_ratio=decrease:flags=bilinear,", w, h);
                         // zoom-in transition scales per frame; otherwise the static user scale
                         let user_scale = c.scale;
@@ -258,8 +278,8 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                                 // the LGPL FFmpeg build has no `eq`; lutyuv + hue give the same result
                                 let _ = write!(
                                     f,
-                                    "format=yuv420p,lutyuv=y='clip((val-128)*{:.4}+128+{:.4},0,255)',hue=s={:.4},",
-                                    a.contrast, a.brightness * 255.0, a.saturation
+                                    "format={},lutyuv=y='clip((val-128)*{:.4}+128+{:.4},0,255)',hue=s={:.4},",
+                                    yuv_fmt, a.contrast, a.brightness * 255.0, a.saturation
                                 );
                             }
                             if a.hue.abs() > 0.01 {
@@ -267,7 +287,7 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                             }
                             if a.warmth.abs() > 0.001 {
                                 let wv = a.warmth * 0.18;
-                                let _ = write!(f, "format=gbrp,colorbalance=rs={:.4}:gs={:.4}:bs={:.4}:rm={:.4}:bm={:.4},", wv, wv * 0.25, -wv, wv * 0.6, -wv * 0.6);
+                                let _ = write!(f, "format={},colorbalance=rs={:.4}:gs={:.4}:bs={:.4}:rm={:.4}:bm={:.4},", gbr_fmt, wv, wv * 0.25, -wv, wv * 0.6, -wv * 0.6);
                             }
                             if a.blur >= 0.5 {
                                 let r = (a.blur * k).clamp(1.0, 40.0);

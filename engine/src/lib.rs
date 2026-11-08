@@ -6,6 +6,8 @@ pub mod export;
 pub mod ff;
 pub mod json;
 pub mod media;
+pub mod cutout;
 pub mod model;
+pub mod ort;
 pub mod server;
 pub mod store;
