@@ -3,6 +3,7 @@ import {
   S, US, on, mutate, selected, media, clipKind, setSpeed, deleteClip, duration, clamp, defaultAdj, fmtDur,
 } from './state.js';
 import { h } from './ui.js';
+import { speedCurveSection } from './speedcurve.js';
 
 export const TRANSITIONS = [
   { id: '', label: 'None' },
@@ -104,6 +105,9 @@ function render() {
     el.append(sec('Speed',
       slider('Speed', () => c.speed, (v) => setSpeed(c, tr, v), { min: 0.25, max: 4, step: 0.05, def: 1 }),
       h('div', { class: 'hint', text: 'Changing the speed changes how long the clip is.' })));
+    const curveBox = speedCurveSection(c, tr, () => { syncs.forEach((f) => f()); document.dispatchEvent(new Event('tlredraw')); });
+    syncs.push(() => curveBox.redraw());
+    el.append(sec('Speed curve', curveBox));
   }
 
   if (kind === 'audio' || (kind === 'video' && m && m.has_audio)) {

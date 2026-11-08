@@ -57,6 +57,34 @@ fn esc_path(p: &str) -> String {
     p.replace('\\', "/").replace(':', "\\:").replace('\'', "\\'")
 }
 
+const CURVE_SEGS: i64 = 24;
+
+/// A speed-curved clip cut into short pieces of constant speed: (source start, source end,
+/// timeline start, timeline length), all in seconds, source times relative to the input's start.
+fn curve_segs(c: &Clip, wn: &Win) -> Option<Vec<(f64, f64, f64, f64)>> {
+    c.curve.as_ref()?;
+    let base = c.src_off(wn.skip);
+    let mut v = Vec::new();
+    for i in 0..CURVE_SEGS {
+        let ta = wn.skip + wn.dur * i / CURVE_SEGS;
+        let tb = wn.skip + wn.dur * (i + 1) / CURVE_SEGS;
+        let a = (c.src_off(ta) - base) as f64 / 1e6;
+        let b = ((c.src_off(tb) - base) as f64 / 1e6).max(a + 1e-6);
+        v.push((a, b, (ta - wn.skip) as f64 / 1e6, (tb - ta) as f64 / 1e6));
+    }
+    Some(v)
+}
+
+/// `setpts` expression that maps source time to output time for those pieces.
+fn curve_setpts(segs: &[(f64, f64, f64, f64)]) -> String {
+    let piece = |s: &(f64, f64, f64, f64)| format!("{:.6}+(T-{:.6})*{:.8}", s.2, s.0, s.3 / (s.1 - s.0));
+    let mut e = piece(&segs[segs.len() - 1]);
+    for s in segs[..segs.len() - 1].iter().rev() {
+        e = format!("if(lt(T,{:.6}),{},{})", s.1, piece(s), e);
+    }
+    format!("setpts='({})/TB'", e.replace('T', "(PTS*TB)"))
+}
+
 pub fn tempo_chain(speed: f64) -> String {
     let mut s = speed;
     let mut parts = Vec::new();
@@ -87,6 +115,8 @@ struct Win<'a> {
     start: i64, // relative to window start
     dur: i64,
     src_in: i64,
+    src_len: i64,     // source time this window consumes
+    skip: i64,        // time into the clip where the window starts
     tail: i64,        // held-frame extension (video only)
     trans: Option<&'a Transition>,
 }
@@ -105,7 +135,9 @@ fn window<'a>(c: &'a Clip, tail: i64, t0: i64, t1: i64) -> Option<Win<'a>> {
     Some(Win {
         start: s - t0,
         dur,
-        src_in: c.src_in + (skip as f64 * c.speed) as i64,
+        src_in: c.src_in + c.src_off(skip),
+        src_len: c.src_off(skip + dur) - c.src_off(skip),
+        skip,
         tail: tail_left,
         trans: if skip == 0 { c.transition_in.as_ref() } else { None },
     })
@@ -169,7 +201,7 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                     let idx = n_inputs;
 
                     // ---- input
-                    let src_len = (wn.dur as f64 * c.speed) as i64;
+                    let src_len = wn.src_len;
                     match m.kind {
                         MediaKind::Image => {
                             if s.audio_only {
@@ -192,7 +224,11 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                     // ---- video chain
                     if m.kind != MediaKind::Audio && !s.audio_only && !track.hidden {
                         let mut f = String::new();
-                        let _ = write!(f, "[{}:v]setpts=(PTS-STARTPTS)/{:.6},fps={:.4},", idx, c.speed, fps);
+                        if let Some(segs) = curve_segs(c, &wn) {
+                            let _ = write!(f, "[{}:v]setpts=PTS-STARTPTS,{},fps={:.4},", idx, curve_setpts(&segs), fps);
+                        } else {
+                            let _ = write!(f, "[{}:v]setpts=(PTS-STARTPTS)/{:.6},fps={:.4},", idx, c.speed, fps);
+                        }
                         let _ = write!(f, "scale={}:{}:force_original_aspect_ratio=decrease:flags=bilinear,", w, h);
                         // zoom-in transition scales per frame; otherwise the static user scale
                         let user_scale = c.scale;
@@ -302,7 +338,7 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                         continue;
                     }
                     let idx = n_inputs;
-                    let src_len = (wn.dur as f64 * c.speed) as i64;
+                    let src_len = wn.src_len;
                     inputs.extend(["-ss".into(), secs(wn.src_in), "-t".into(), secs(src_len + 100_000), "-i".into(), m.path.clone()]);
                     n_inputs += 1;
                     audio_chain(&mut g, idx, c, &wn, &mut audio_labels);
@@ -391,7 +427,28 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
 
 fn audio_chain(g: &mut String, idx: usize, c: &Clip, wn: &Win, labels: &mut Vec<String>) {
     let dur_s = wn.dur as f64 / 1e6;
-    let mut f = format!("[{}:a]asetpts=PTS-STARTPTS,{},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,", idx, tempo_chain(c.speed));
+    let mut f = String::new();
+    if let Some(segs) = curve_segs(c, wn) {
+        let n = segs.len();
+        let _ = write!(f, "[{}:a]asetpts=PTS-STARTPTS,aresample=48000,asplit={}", idx, n);
+        for i in 0..n {
+            let _ = write!(f, "[as{}_{}]", idx, i);
+        }
+        f.push_str(";\n");
+        for (i, sg) in segs.iter().enumerate() {
+            let _ = write!(
+                f,
+                "[as{}_{}]atrim=start={:.6}:end={:.6},asetpts=PTS-STARTPTS,{}[at{}_{}];\n",
+                idx, i, sg.0, sg.1, tempo_chain((sg.1 - sg.0) / sg.3.max(1e-6)), idx, i
+            );
+        }
+        for i in 0..n {
+            let _ = write!(f, "[at{}_{}]", idx, i);
+        }
+        let _ = write!(f, "concat=n={}:v=0:a=1,aformat=sample_fmts=fltp:channel_layouts=stereo,", n);
+    } else {
+        let _ = write!(f, "[{}:a]asetpts=PTS-STARTPTS,{},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,", idx, tempo_chain(c.speed));
+    }
     if (c.volume - 1.0).abs() > 0.001 {
         let _ = write!(f, "volume={:.4},", c.volume);
     }

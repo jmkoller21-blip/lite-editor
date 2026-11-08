@@ -85,6 +85,8 @@ pub struct Clip {
     pub dur: i64,
     pub src_in: i64,
     pub speed: f64,
+    /// speed curve: (position along the clip 0..1, speed), linear between points
+    pub curve: Option<Vec<(f64, f64)>>,
     pub x: f64,
     pub y: f64,
     pub scale: f64,
@@ -103,6 +105,68 @@ impl Clip {
     pub fn end(&self) -> i64 {
         self.start + self.dur
     }
+
+    /// Source time (us) that has played `tl` us after the clip starts.
+    pub fn src_off(&self, tl: i64) -> i64 {
+        match &self.curve {
+            None => (tl as f64 * self.speed) as i64,
+            Some(k) => {
+                let u = (tl as f64 / self.dur.max(1) as f64).clamp(0.0, 1.0);
+                (self.dur as f64 * curve_integral(k, u)) as i64
+            }
+        }
+    }
+}
+
+/// Integral of a piecewise-linear speed curve from 0 to u. The curve starts at 0 and ends at 1.
+pub fn curve_integral(k: &[(f64, f64)], u: f64) -> f64 {
+    let mut acc = 0.0;
+    let (mut px, mut ps) = (0.0, k[0].1);
+    for &(x, sp) in k {
+        if x > px {
+            let xe = x.min(u);
+            if xe > px {
+                let se = ps + (sp - ps) * ((xe - px) / (x - px));
+                acc += (ps + se) / 2.0 * (xe - px);
+            }
+            if x >= u {
+                return acc;
+            }
+        }
+        px = x;
+        ps = sp;
+    }
+    if u > px {
+        acc += ps * (u - px);
+    }
+    acc
+}
+
+fn parse_curve(c: &Json) -> Option<Vec<(f64, f64)>> {
+    let arr = c.get("curve")?.as_arr();
+    let mut pts: Vec<(f64, f64)> = arr
+        .iter()
+        .filter_map(|p| {
+            let a = p.as_arr();
+            if a.len() < 2 {
+                return None;
+            }
+            Some((a[0].as_f64()?.clamp(0.0, 1.0), a[1].as_f64()?.clamp(0.1, 10.0)))
+        })
+        .collect();
+    if pts.len() < 2 {
+        return None;
+    }
+    pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    if pts[0].0 > 0.0 {
+        let s = pts[0].1;
+        pts.insert(0, (0.0, s));
+    }
+    if pts[pts.len() - 1].0 < 1.0 {
+        let s = pts[pts.len() - 1].1;
+        pts.push((1.0, s));
+    }
+    Some(pts)
 }
 
 #[derive(Clone, Debug)]
@@ -200,6 +264,7 @@ impl Project {
                     dur,
                     src_in: c.i64_or("in", 0).max(0),
                     speed: c.f64_or("speed", 1.0).clamp(0.1, 16.0),
+                    curve: parse_curve(c),
                     x: c.f64_or("x", 0.0),
                     y: c.f64_or("y", 0.0),
                     scale: c.f64_or("scale", 1.0).clamp(0.01, 20.0),

@@ -211,3 +211,35 @@ fn empty_timeline_is_an_error() {
     let p = Project::from_json(&Json::parse(r#"{"width":640,"height":360,"tracks":[]}"#).unwrap()).unwrap();
     assert!(run_export(&p, &dir, "empty", false).is_err());
 }
+
+#[test]
+fn speed_curve_retimes_the_clip() {
+    let ff = Ff::locate();
+    assert!(ff.available(), "ffmpeg is required for this test");
+    let dir = work();
+    // source: 2 s red then 2 s blue, with a tone
+    let src = dir.join("rb.mp4").to_string_lossy().replace('\\', "/");
+    let st = ff.command("ffmpeg")
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=2", "-f", "lavfi", "-i", "color=c=blue:s=640x360:r=30:d=2",
+               "-f", "lavfi", "-i", "sine=frequency=440:d=4", "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]", "-map", "2:a",
+               "-c:v", &vcodec(), "-pix_fmt", "yuv420p", "-c:a", "aac", &src])
+        .status().unwrap();
+    assert!(st.success());
+    // speed goes 0.5x -> 2x over a 2 s clip, so it uses 2.5 s of footage and the colour flips at about 1.74 s
+    let j = format!(r##"{{
+      "name":"c","width":640,"height":360,"fps":30,
+      "media":[{{"id":"m1","path":"{src}","kind":"video","dur":4000000,"w":640,"h":360,"has_audio":true}}],
+      "tracks":[{{"id":"v1","kind":"video","clips":[
+        {{"id":"c1","media":"m1","start":0,"dur":2000000,"in":0,"speed":1.25,"curve":[[0,0.5],[1,2]]}}]}}]}}"##, src = src);
+    let p = Project::from_json(&Json::parse(&j).unwrap()).unwrap();
+    let out = run_export(&p, &dir, "curve", false).unwrap_or_else(|e| panic!("curve export failed: {}", e));
+    let info = ff.probe(&out).unwrap();
+    assert!(info.has_audio);
+    assert!((info.dur as f64 / 1e6 - 2.0).abs() < 0.2, "duration {}", info.dur);
+    let a = pixel(&out, 1.68, 5, 5);
+    assert!(a.0 > 200 && a.2 < 60, "still red at 1.68 s, got {:?}", a);
+    let b = pixel(&out, 1.82, 5, 5);
+    assert!(b.2 > 200 && b.0 < 60, "blue by 1.82 s, got {:?}", b);
+    let early = pixel(&out, 0.3, 5, 5);
+    assert!(early.0 > 200, "red at 0.3 s, got {:?}", early);
+}

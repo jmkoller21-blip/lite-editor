@@ -83,6 +83,30 @@ const check = (cond, name, detail) => (cond ? ok(name, detail) : bad(name, detai
     doc = await saved(page, apiCall);
     check(doc.tracks.reduce((n, t) => n + t.clips.length, 0) === 3, 'redo restores the split');
 
+    // ---- speed curve on the selected clip
+    const selDur = (d) => d.tracks.flatMap((t) => t.clips).find((c) => c.curve || c.speed !== 1) || null;
+    const before = (await saved(page, apiCall)).tracks.flatMap((t) => t.clips).map((c) => c.dur).join(',');
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.media && x.dur > 1.5e6); m.S.sel = c.id; m.emit('select'); });
+    await page.waitForTimeout(200);
+    await page.locator('#props .chips button', { hasText: 'Montage' }).click();
+    await page.waitForTimeout(300);
+    doc = await saved(page, apiCall);
+    const cc = selDur(doc);
+    check(cc && cc.curve && cc.curve.length === 6 && cc.dur > 0, 'speed curve preset applies', JSON.stringify(cc && cc.curve));
+    await page.waitForSelector('#props canvas.curve');
+    await shot('04b-speed-curve');
+    // click on the graph to add a point
+    const cb = await page.locator('#props canvas.curve').boundingBox();
+    await page.mouse.click(cb.x + cb.width * 0.9, cb.y + 30);
+    await page.waitForTimeout(300);
+    doc = await saved(page, apiCall);
+    check(selDur(doc).curve.length === 7, 'clicking the graph adds a point');
+    await page.locator('#props .chips button', { hasText: 'Flat' }).click();
+    await page.waitForTimeout(300);
+    doc = await saved(page, apiCall);
+    const after = doc.tracks.flatMap((t) => t.clips).map((c) => c.dur).join(',');
+    check(!doc.tracks.flatMap((t) => t.clips).some((c) => c.curve) && after === before, 'Flat removes the curve and restores the length', before + ' -> ' + after);
+
     // ---- text
     await page.click('#tab-text');
     await page.locator('#left-body .preset').first().click();

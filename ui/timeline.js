@@ -5,7 +5,7 @@ import { icon } from './icons.js';
 import {
   S, US, MIN_DUR, media, tracksTopDown, clipEnd, clipKind, clamp, frameUs, findClip, mutate, beginGesture,
   endGesture, on, emit, duration, trackLabel, trackAcceptsKind, snapTime, neighbours, overlaps, addTrack,
-  removeTrack, toggleTrack, splitAt, trimSide, deleteClip, selected,
+  removeTrack, toggleTrack, splitAt, trimSide, deleteClip, selected, srcOffset,
 } from './state.js';
 import { seek } from './preview.js';
 
@@ -257,7 +257,7 @@ function drawClip(c, tr, y) {
     const mid = top + h / 2;
     for (let px = Math.max(0, Math.floor(x0)); px < Math.min(W, x1); px += 2) {
       const tUs = tOf(px + viewX * 0 ) - c.start; // time from clip start at this pixel
-      const srcMs = (c.in + tUs * c.speed) / 1000;
+      const srcMs = (c.in + srcOffset(c, tUs)) / 1000;
       const i = Math.floor(srcMs / wv.bucket_ms);
       const p = (wv.peaks[i] || 0) / 255;
       const bh = Math.max(1, p * (h - 8));
@@ -275,7 +275,7 @@ function drawClip(c, tr, y) {
   ctx.fillStyle = '#fff';
   ctx.font = '500 11px ' + css('--font-sans');
   ctx.textBaseline = 'top';
-  const label = (c.text ? c.text.content.replace(/\s+/g, ' ') : m ? m.name : '') + (c.speed !== 1 ? `  ${c.speed}×` : '');
+  const label = (c.text ? c.text.content.replace(/\s+/g, ' ') : m ? m.name : '') + (c.curve ? '  speed curve' : c.speed !== 1 ? `  ${+c.speed.toFixed(2)}×` : '');
   ctx.shadowColor = 'rgba(0,0,0,.8)'; ctx.shadowBlur = 2;
   ctx.fillText(label, Math.max(x0, 0) + 6, top + 4);
   ctx.restore();

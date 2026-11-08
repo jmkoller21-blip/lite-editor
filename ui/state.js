@@ -230,7 +230,15 @@ export function splitAt(t) {
       right.id = uid();
       right.start = t;
       right.dur = clipEnd(c) - t;
-      right.in = c.in + Math.round((t - c.start) * c.speed);
+      const u = (t - c.start) / c.dur;
+      right.in = c.in + Math.round(srcOffset(c, t - c.start));
+      if (c.curve) {
+        right.curve = cropCurve(c, u, 1);
+        const lc = cropCurve(c, 0, u);
+        right.speed = curveAvg(right.curve);
+        c.curve = lc;
+        c.speed = curveAvg(lc);
+      }
       right.transition_in = null;
       right.fade_in = 0;
       c.dur = t - c.start;
@@ -249,12 +257,15 @@ export function trimSide(side, t) {
   if (sel.track.locked || !(t > c.start + MIN_DUR / 2 && t < clipEnd(c) - MIN_DUR / 2)) return false;
   mutate(side === 'left' ? 'Delete left' : 'Delete right', () => {
     if (side === 'left') {
-      c.in += Math.round((t - c.start) * c.speed);
+      const u = (t - c.start) / c.dur;
+      c.in += Math.round(srcOffset(c, t - c.start));
+      if (c.curve) { c.curve = cropCurve(c, u, 1); c.speed = curveAvg(c.curve); }
       c.dur = clipEnd(c) - t;
       c.start = t;
       c.fade_in = 0;
       c.transition_in = null;
     } else {
+      if (c.curve) { c.curve = cropCurve(c, 0, (t - c.start) / c.dur); c.speed = curveAvg(c.curve); }
       c.dur = t - c.start;
       c.fade_out = 0;
     }
@@ -274,7 +285,87 @@ export function deleteClip(id, ripple) {
   return true;
 }
 
+
+// ---- speed curve -------------------------------------------------------
+// c.curve = [[u, speed], ...]: u is the position along the clip's own length (0..1),
+// speed is a multiplier (0.1..10). Speed is linear between points. Without a curve the
+// clip uses the flat c.speed.
+export const SPEED_MIN = 0.1;
+export const SPEED_MAX = 10;
+export function curvePts(c) {
+  const k = c.curve;
+  if (!k || k.length < 2) return null;
+  return k;
+}
+export function curveSpeedAt(c, u) {
+  const k = curvePts(c);
+  if (!k) return c.speed;
+  if (u <= k[0][0]) return k[0][1];
+  for (let i = 1; i < k.length; i++) {
+    if (u <= k[i][0]) {
+      const [u0, s0] = k[i - 1], [u1, s1] = k[i];
+      return u1 === u0 ? s1 : s0 + (s1 - s0) * ((u - u0) / (u1 - u0));
+    }
+  }
+  return k[k.length - 1][1];
+}
+// integral of speed from 0 to u (in units of "clip lengths of source")
+export function curveIntegral(k, u) {
+  let acc = 0, px = 0, ps = k[0][1];
+  for (let i = 0; i < k.length; i++) {
+    const [x, sp] = k[i];
+    if (x > px) {
+      const xe = Math.min(x, u);
+      if (xe > px) {
+        const se = ps + (sp - ps) * ((xe - px) / (x - px));
+        acc += (ps + se) / 2 * (xe - px);
+      }
+      if (x >= u) return acc;
+      px = x; ps = sp;
+    } else { ps = sp; }
+  }
+  if (u > px) acc += ps * (u - px);
+  return acc;
+}
+// source time (us) that is shown tlOff us into the clip
+export function srcOffset(c, tlOff) {
+  const k = curvePts(c);
+  if (!k) return tlOff * c.speed;
+  return c.dur * curveIntegral(k, clamp(tlOff / c.dur, 0, 1));
+}
+export function curveAvg(k) { return curveIntegral(k, 1); }
+// the part of a curve between u0 and u1, re-based to 0..1
+export function cropCurve(c, u0, u1) {
+  const k = curvePts(c);
+  if (!k) return null;
+  const span = Math.max(1e-6, u1 - u0);
+  const pts = [[0, curveSpeedAt(c, u0)]];
+  for (const [x, sp] of k) if (x > u0 + 1e-6 && x < u1 - 1e-6) pts.push([(x - u0) / span, sp]);
+  pts.push([1, curveSpeedAt(c, u1)]);
+  return pts;
+}
+export function normaliseCurve(k) {
+  const pts = k.map(([x, sp]) => [clamp(x, 0, 1), clamp(sp, SPEED_MIN, SPEED_MAX)]).sort((a, b) => a[0] - b[0]);
+  if (!pts.length) return null;
+  if (pts[0][0] > 0) pts.unshift([0, pts[0][1]]);
+  if (pts[pts.length - 1][0] < 1) pts.push([1, pts[pts.length - 1][1]]);
+  return pts;
+}
+// set or clear the curve; the amount of source footage stays the same, so the clip gets longer or shorter
+export function setCurve(c, tr, k) {
+  const srcSpan = c.dur * c.speed;
+  const pts = k ? normaliseCurve(k) : null;
+  const avg = pts ? Math.max(0.05, curveAvg(pts)) : (c.flatSpeed || 1);
+  let dur = Math.max(MIN_DUR, Math.round(srcSpan / avg));
+  const { nextStart } = neighbours(tr, c);
+  if (c.start + dur > nextStart) dur = Math.max(MIN_DUR, nextStart - c.start);
+  if (pts) { c.curve = pts; c.flatSpeed = c.flatSpeed || c.speed; } else { delete c.curve; delete c.flatSpeed; }
+  c.speed = avg;
+  c.dur = dur;
+}
+
 export function setSpeed(c, tr, speed) {
+  if (c.curve) { delete c.curve; delete c.flatSpeed; }
   speed = clamp(speed, 0.1, 16);
   const srcSpan = c.dur * c.speed;
   let dur = Math.max(MIN_DUR, Math.round(srcSpan / speed));

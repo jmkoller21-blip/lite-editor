@@ -4,7 +4,7 @@
 import { fileUrl } from './api.js';
 import {
   S, US, media, clipEnd, selected, findClip, clamp, mutate, beginGesture, endGesture, on, emit,
-  duration, clipKind, frameUs,
+  duration, clipKind, frameUs, curveSpeedAt, srcOffset,
 } from './state.js';
 
 const stage = document.getElementById('stage');
@@ -200,9 +200,9 @@ function syncMedia(e, c, t, playing, frozen) {
   }
   if (e.kind === 'image') return;
   const el = e.el;
-  const rate = clamp(c.speed, 0.0625, 16);
+  const rate = clamp(c.curve ? curveSpeedAt(c, clamp((t - c.start) / c.dur, 0, 1)) : c.speed, 0.0625, 16);
   if (el.playbackRate !== rate) el.playbackRate = rate;
-  const srcT = frozen ? Math.max(0, (c.in + c.dur * c.speed) / US - 0.05) : Math.max(0, (c.in + (t - c.start) * c.speed) / US);
+  const srcT = frozen ? Math.max(0, (c.in + srcOffset(c, c.dur)) / US - 0.05) : Math.max(0, (c.in + srcOffset(c, t - c.start)) / US);
   const fs = frameUs() / US;
   if (frozen || !playing) {
     if (!el.paused) el.pause();
