@@ -118,7 +118,7 @@ fn every_effect_and_transition_builds_and_runs() {
     let red = gen(&dir, "r2.mp4", "color=c=red", 4, true);
     let blue = gen(&dir, "b2.mp4", "color=c=blue", 4, true);
     let img = png(&dir, "g.png");
-    let tone = dir.join("tone.wav").to_string_lossy().to_string();
+    let tone = dir.join("tone.wav").to_string_lossy().replace('\\', "/");
     assert!(Ff::locate().command("ffmpeg").args(["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=880:d=3", &tone]).status().unwrap().success());
 
     for tr in ["dissolve", "slide-left", "slide-right", "slide-up", "zoom"] {
