@@ -57,10 +57,20 @@ jobs:
         id: tests
         shell: cmd
         continue-on-error: true
+        timeout-minutes: 15
+        env:
+          LITE_FFMPEG_DIR: ${{ github.workspace }}\ffmpeg
+        run: cargo test --manifest-path engine/Cargo.toml --lib --test export_it --test server_it > test-output.txt 2>&1
+
+      - name: Background removal tests
+        id: cutouttests
+        shell: cmd
+        continue-on-error: true
+        timeout-minutes: 8
         env:
           LITE_FFMPEG_DIR: ${{ github.workspace }}\ffmpeg
           LITE_AI_DIR: ${{ github.workspace }}\ai
-        run: cargo test --manifest-path engine/Cargo.toml > test-output.txt 2>&1
+        run: cargo test --manifest-path engine/Cargo.toml --test cutout_it > cutout-output.txt 2>&1
 
       - name: Build installer
         shell: pwsh
@@ -85,6 +95,10 @@ jobs:
           $r += "Engine tests on Windows: ${{ steps.tests.outcome }}"
           if (Test-Path test-output.txt) {
             $r += (Select-String -Path test-output.txt -Pattern 'test result|FAILED|panicked|failed' | Select-Object -Last 30 | ForEach-Object { $_.Line })
+          }
+          $r += "Background removal tests on Windows: ${{ steps.cutouttests.outcome }}"
+          if (Test-Path cutout-output.txt) {
+            $r += (Select-String -Path cutout-output.txt -Pattern 'test result|FAILED|panicked|failed|matte|error' | Select-Object -Last 12 | ForEach-Object { $_.Line.Substring(0, [Math]::Min(300, $_.Line.Length)) })
           }
           $r += ''
           if (Test-Path smoke-result.txt) { $r += (Get-Content smoke-result.txt) } else { $r += "No acceptance result was written (smoke step: ${{ steps.smoke.outcome }})." }

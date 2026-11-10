@@ -17,6 +17,7 @@ extern "C" {
 #[cfg(windows)]
 #[link(name = "kernel32")]
 extern "system" {
+    fn SetErrorMode(mode: u32) -> u32;
     fn LoadLibraryExW(path: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
     fn GetProcAddress(handle: *mut c_void, name: *const c_char) -> *mut c_void;
 }
@@ -37,6 +38,7 @@ fn load_symbol(lib: &Path, sym: &str) -> Result<*mut c_void, String> {
     unsafe {
         use std::os::windows::ffi::OsStrExt;
         let w: Vec<u16> = lib.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        SetErrorMode(1); // never show a blocking 'missing DLL' box
         // 8 = look for the DLL's own dependencies (the VC runtime we ship beside it) in its folder first
         let h = LoadLibraryExW(w.as_ptr(), std::ptr::null_mut(), 8);
         if h.is_null() {
