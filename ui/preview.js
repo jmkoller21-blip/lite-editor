@@ -124,6 +124,7 @@ function drop(e) {
     e.el.removeAttribute('src');
     if (e.el.load) e.el.load();
   }
+  if (e.maskEl) { e.maskEl.pause(); e.maskEl.removeAttribute('src'); e.maskEl.load(); }
   if (e.layer) e.layer.remove();
   entries.delete(e.id);
 }
@@ -185,6 +186,7 @@ function applyVisual(e, c, t, frozen) {
     s.style.padding = tx.boxed ? `${px / 4}px` : '0';
   } else {
     e.el.style.filter = cssFilter(c.adj, K);
+    if (e.canvas) e.canvas.style.filter = e.el.style.filter;
   }
 }
 
@@ -214,11 +216,71 @@ function syncMedia(e, c, t, playing, frozen) {
   } else if (el.readyState >= 1 && Math.abs(el.currentTime - srcT) > 0.35) {
     el.currentTime = srcT;
   }
+  syncCutout(e, c, srcT, rate, playing, frozen, fs);
   // volume with fades
   const fi = c.fade_in > 0 ? clamp((t - c.start) / c.fade_in, 0, 1) : 1;
   const fo = c.fade_out > 0 ? clamp((clipEnd(c) - t) / c.fade_out, 0, 1) : 1;
   el.volume = clamp(c.volume * Math.min(fi, fo), 0, 1);
   el.muted = !!e.track.muted || frozen || !m.has_audio;
+}
+
+// Background removal in the preview: the matte video plays in step with the footage, and each
+// frame is drawn onto a canvas with the matte as its transparency.
+function syncCutout(e, c, srcT, rate, playing, frozen, fs) {
+  if (!c.cutout) {
+    if (e.maskEl) {
+      e.maskEl.pause(); e.maskEl.removeAttribute('src'); e.maskEl.load();
+      e.canvas.remove(); e.maskEl = null; e.canvas = null;
+      e.el.style.visibility = '';
+    }
+    return;
+  }
+  if (!e.maskEl) {
+    e.maskEl = document.createElement('video');
+    e.maskEl.muted = true; e.maskEl.playsInline = true; e.maskEl.preload = 'auto';
+    e.maskEl.addEventListener('loadedmetadata', () => { if (e.maskPending > 0) e.maskEl.currentTime = e.maskPending; });
+    for (const ev of ['loadeddata', 'seeked']) {
+      e.maskEl.addEventListener(ev, () => render());
+      e.el.addEventListener(ev, () => render());
+    }
+    e.canvas = document.createElement('canvas');
+    e.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
+    e.mcv = document.createElement('canvas');
+    e.mcv.width = 320; e.mcv.height = 320;
+    e.layer.appendChild(e.canvas);
+    e.el.style.visibility = 'hidden';
+  }
+  const m = e.maskEl;
+  const want = fileUrl(c.cutout);
+  if (e.maskSrc !== want) { e.maskSrc = want; m.src = want; }
+  if (m.playbackRate !== rate) m.playbackRate = rate;
+  if (frozen || !playing) {
+    if (!m.paused) m.pause();
+    if (m.readyState < 1) e.maskPending = srcT;
+    else if (Math.abs(m.currentTime - srcT) > fs * 0.6) m.currentTime = srcT;
+  } else if (m.paused) {
+    if (m.readyState < 1) e.maskPending = srcT; else m.currentTime = srcT;
+    m.play().catch(() => {});
+  } else if (m.readyState >= 1 && Math.abs(m.currentTime - srcT) > 0.35) {
+    m.currentTime = srcT;
+  }
+  const v = e.el;
+  if (v.readyState < 2 || m.readyState < 2 || !v.videoWidth) return;
+  const cv = e.canvas;
+  if (cv.width !== v.videoWidth || cv.height !== v.videoHeight) { cv.width = v.videoWidth; cv.height = v.videoHeight; }
+  const mx = e.mcv.getContext('2d', { willReadFrequently: true });
+  mx.drawImage(m, 0, 0, 320, 320);
+  const img = mx.getImageData(0, 0, 320, 320);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) d[i + 3] = d[i];
+  mx.putImageData(img, 0, 0);
+  const g = cv.getContext('2d');
+  g.globalCompositeOperation = 'source-over';
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.drawImage(v, 0, 0, cv.width, cv.height);
+  g.globalCompositeOperation = 'destination-in';
+  g.drawImage(e.mcv, 0, 0, cv.width, cv.height);
+  g.globalCompositeOperation = 'source-over';
 }
 
 function updateMessage() {

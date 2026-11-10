@@ -33,6 +33,20 @@ jobs:
           Get-ChildItem ffmpeg | Format-Table Name, Length
           .\ffmpeg\ffmpeg.exe -hide_banner -encoders | Select-String "h264|libvpx|aac"
 
+      - name: Fetch background-removal runtime and model
+        shell: pwsh
+        run: |
+          $v = "1.20.1"
+          Invoke-WebRequest -Uri "https://github.com/microsoft/onnxruntime/releases/download/v$v/onnxruntime-win-x64-$v.zip" -OutFile ort.zip
+          Expand-Archive ort.zip -DestinationPath ortx
+          $root = Get-ChildItem ortx -Directory | Select-Object -First 1
+          New-Item -ItemType Directory -Force ai | Out-Null
+          Copy-Item "$($root.FullName)\lib\onnxruntime.dll" ai\
+          Copy-Item "$($root.FullName)\LICENSE" ai\ONNXRUNTIME-LICENSE.txt
+          Invoke-WebRequest -Uri "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx" -OutFile ai\u2netp.onnx
+          foreach ($d in "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll") { Copy-Item "$env:SystemRoot\System32\$d" ai\ }
+          Get-ChildItem ai | Format-Table Name, Length
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -45,6 +59,7 @@ jobs:
         continue-on-error: true
         env:
           LITE_FFMPEG_DIR: ${{ github.workspace }}\ffmpeg
+          LITE_AI_DIR: ${{ github.workspace }}\ai
         run: cargo test --manifest-path engine/Cargo.toml > test-output.txt 2>&1
 
       - name: Build installer

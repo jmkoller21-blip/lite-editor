@@ -13,6 +13,7 @@
       "../ui": "ui",
       "../stock": "stock",
       "../ffmpeg": "ffmpeg",
+      "../ai": "ai",
       "../THIRD_PARTY_LICENSES.txt": "THIRD_PARTY_LICENSES.txt"
     },
     "windows": {

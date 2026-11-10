@@ -179,6 +179,7 @@ impl App {
             }
             "media_import" => self.media_import(a),
             "media_check" => Ok(self.media_check(a)),
+            "cutout_start" => self.cutout_start(a),
             "job_status" => Ok(self.job_json(&a.str_or("id", ""))),
             "job_cancel" => {
                 if let Some(j) = self.jobs.lock().unwrap().get(&a.str_or("id", "")) {
@@ -224,6 +225,45 @@ impl App {
         }
     }
 
+    fn ai_ready(&self) -> bool {
+        crate::cutout::available(crate::cutout::ai_dir(self.paths.ffmpeg_dir.as_deref()).as_deref())
+    }
+
+    /// Start (or reuse) the background-removal matte for a media file.
+    fn cutout_start(self: &Arc<App>, a: &Json) -> Result<Json, String> {
+        let ai = match crate::cutout::ai_dir(self.paths.ffmpeg_dir.as_deref()) {
+            Some(d) if crate::cutout::available(Some(&d)) => d,
+            _ => return Err("Background removal is not installed in this copy of the app".into()),
+        };
+        let path = a.str_or("path", "");
+        if path.is_empty() || !Path::new(&path).exists() {
+            return Err("The video file could not be found".into());
+        }
+        let id = a.str_or("id", &media::media_id(&path));
+        if !crate::store::safe_id(&id) {
+            return Err("bad media id".into());
+        }
+        let dir = self.store.cache_dir("masks");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let out = dir.join(format!("{}.webm", id));
+        let outs = out.to_string_lossy().to_string();
+        self.allow(&outs);
+        if out.exists() {
+            return Ok(Json::obj(vec![("mask", Json::s(&outs)), ("ready", Json::Bool(true))]));
+        }
+        let proxy = a.str_or("proxy", "");
+        let src = if !proxy.is_empty() && Path::new(&proxy).exists() { proxy } else { path };
+        let dur_s = a.f64_or("dur", 10.0);
+        let (job, prog, cancel) = self.add_job("cutout");
+        let me = self.clone();
+        let job2 = job.clone();
+        std::thread::spawn(move || {
+            let r = crate::cutout::make_mask(&me.ff, &ai, &src, dur_s, &out, &prog, &cancel);
+            me.finish_job(&job2, r.map(|_| Json::obj(vec![("mask", Json::s(&outs))])));
+        });
+        Ok(Json::obj(vec![("job", Json::s(&job))]))
+    }
+
     fn sys_info(&self) -> Json {
         let version = self.ff.version();
         let encoders: Vec<Json> = if version.is_some() { self.ff.usable_h264_encoders().iter().map(|e| Json::s(e)).collect() } else { vec![] };
@@ -234,6 +274,7 @@ impl App {
             ("encoders", Json::Arr(encoders)),
             ("cores", Json::n(cores as f64)),
             ("os", Json::s(std::env::consts::OS)),
+            ("cutout", Json::Bool(self.ai_ready())),
             ("data_dir", Json::s(&self.paths.data_dir.to_string_lossy())),
         ])
     }

@@ -100,6 +100,27 @@ try {
   $item = $imp.items[0]
   Check ((-not $item.error) -and ($item.kind -eq 'video')) 'import reads the clip' ([string]$item.error)
 
+  # ---- background removal (AI runtime + model are bundled in the installer)
+  $si = Api 'sys_info' @{}
+  Check ([bool]$si.cutout) 'background removal is installed'
+  if ($si.cutout) {
+    $cr = Api 'cutout_start' @{ id = $item.id; path = $clip; dur = 2 }
+    $cpst = $null
+    if ($cr.job) {
+      for ($i = 0; $i -lt 120; $i++) {
+        Start-Sleep -Seconds 1
+        $cpst = Api 'job_status' @{ id = $cr.job }
+        if ($cpst.state -ne 'running') { break }
+      }
+    }
+    $mask = if ($cr.mask) { [string]$cr.mask } elseif ($cpst) { [string]$cpst.result.mask } else { '' }
+    Check (($cr.ready -or ($cpst -and $cpst.state -eq 'done')) -and $mask -and (Test-Path $mask)) 'background removal makes a matte video' ('state=' + $cpst.state + ' ' + [string]$cpst.message)
+    if ($mask -and (Test-Path $mask)) {
+      $mi = & $fp -v error -show_entries stream=codec_name,width,height -of csv=p=0 $mask
+      Log ('matte video: ' + (@($mi) -join ' | '))
+    }
+  }
+
   # ---- a big clip in a codec browsers cannot play needs a preview copy (proxy)
   $big = Join-Path $env:TEMP 'ci-big.mp4'
   & $ff -hide_banner -loglevel error -y -f lavfi -i 'testsrc2=s=1920x1080:r=30:d=2' -c:v mpeg4 -q:v 5 -an $big

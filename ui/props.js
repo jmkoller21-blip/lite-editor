@@ -4,6 +4,8 @@ import {
 } from './state.js';
 import { h } from './ui.js';
 import { speedCurveSection } from './speedcurve.js';
+import { api, waitJob } from './api.js';
+import { toast } from './ui.js';
 
 export const TRANSITIONS = [
   { id: '', label: 'None' },
@@ -55,6 +57,53 @@ function check(label, get, set) {
   box.addEventListener('change', () => { mutate(label, () => set(box.checked), { source: 'prop' }); });
   syncs.push(() => { box.checked = !!get(); });
   return h('div', { class: 'prow two' }, h('span', {}), h('label', { class: 'check' }, box, label));
+}
+
+let cutoutBusy = new Set(); // media ids being processed
+
+// Background removal: the AI matte is made once per video (kept in the cache), then switched on or off per clip.
+function cutoutSection(c, m) {
+  const status = h('div', { class: 'hint' });
+  const bar = h('div', { class: 'bar', hidden: true }, h('i'));
+  const btn = h('button', { class: 'btn', type: 'button' });
+  const busy = cutoutBusy.has(m.id);
+  const paint = () => {
+    btn.textContent = c.cutout ? 'Bring the background back' : 'Remove background';
+    btn.disabled = cutoutBusy.has(m.id) || !(S.sys && S.sys.cutout);
+    status.textContent = !(S.sys && S.sys.cutout)
+      ? 'Background removal is not included in this copy of the app.'
+      : cutoutBusy.has(m.id) ? 'Finding the person or object… you can keep editing.'
+      : c.cutout ? 'Background removed. Works best on a clear subject. Moves with the clip.'
+      : 'Cuts out the main person or object using a built-in AI model. Nothing is uploaded.';
+  };
+  btn.addEventListener('click', async () => {
+    if (c.cutout) { mutate('Bring background back', () => { delete c.cutout; }); return; }
+    if (cutoutBusy.has(m.id)) return;
+    cutoutBusy.add(m.id);
+    bar.hidden = false;
+    paint();
+    try {
+      const r = await api('cutout_start', { id: m.id, path: m.path, proxy: m.proxy || '', dur: m.dur / US });
+      let mask = r.mask;
+      if (r.job) {
+        const j = await waitJob(r.job, (p) => { bar.firstChild.style.width = p + '%'; });
+        if (j.state !== 'done') throw new Error(j.message || 'Background removal did not finish');
+        mask = j.result.mask;
+      }
+      m.cutoutMask = mask;
+      cutoutBusy.delete(m.id);
+      mutate('Remove background', () => { c.cutout = mask; });
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      cutoutBusy.delete(m.id);
+      bar.hidden = true;
+      paint();
+    }
+  });
+  paint();
+  bar.hidden = !busy;
+  return sec('Background', btn, bar, status);
 }
 
 function render() {
@@ -109,6 +158,8 @@ function render() {
     syncs.push(() => curveBox.redraw());
     el.append(sec('Speed curve', curveBox));
   }
+
+  if (kind === 'video' && m) el.append(cutoutSection(c, m));
 
   if (kind === 'audio' || (kind === 'video' && m && m.has_audio)) {
     const maxFade = Math.max(0.1, Math.min(5, c.dur / US / 2));

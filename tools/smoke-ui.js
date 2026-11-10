@@ -107,6 +107,28 @@ const check = (cond, name, detail) => (cond ? ok(name, detail) : bad(name, detai
     const after = doc.tracks.flatMap((t) => t.clips).map((c) => c.dur).join(',');
     check(!doc.tracks.flatMap((t) => t.clips).some((c) => c.curve) && after === before, 'Flat removes the curve and restores the length', before + ' -> ' + after);
 
+    // ---- background removal (only when the AI runtime is installed for this run)
+    const hasAi = await page.evaluate(async () => (await import('/state.js')).S.sys.cutout);
+    if (hasAi) {
+      await page.locator('#props button', { hasText: 'Remove background' }).click();
+      for (let i = 0; i < 180; i++) {
+        if ((await saved(page, apiCall)).tracks.flatMap((t) => t.clips).some((c) => c.cutout)) break;
+        await page.waitForTimeout(1000);
+      }
+      doc = await saved(page, apiCall);
+      check(doc.tracks.flatMap((t) => t.clips).some((c) => c.cutout), 'matte finished and is on the clip');
+      ok('background removal makes a matte and switches on');
+      await page.waitForSelector('#stage canvas', { timeout: 10000 }).catch(async (e) => { console.log(await page.evaluate(async () => { const st = await import('/state.js'); return JSON.stringify({t: st.S.t, sel: st.S.sel, html: document.getElementById('stage').innerHTML.slice(0, 900), clips: st.S.doc.tracks.flatMap(t=>t.clips).map(c=>[c.id,c.start,c.dur,!!c.cutout]) }); })); throw e; });
+      await page.waitForTimeout(1200);
+      await shot('04c-cutout');
+      const vis = await page.evaluate(() => { const cv = document.querySelector('#stage canvas'); const g = cv.getContext('2d'); const d = g.getImageData(0, 0, cv.width, cv.height).data; let a = 0, z = 0; for (let i = 3; i < d.length; i += 4 * 97) { if (d[i] === 0) z++; else a++; } return { opaque: a, clear: z }; });
+      check(vis.opaque + vis.clear > 0, 'preview draws the cut-out layer', JSON.stringify(vis));
+      await page.locator('#props button', { hasText: 'Bring the background back' }).click();
+      await page.waitForTimeout(300);
+      doc = await saved(page, apiCall);
+      check(!doc.tracks.flatMap((t) => t.clips).some((c) => c.cutout), 'background can be brought back');
+    } else { console.log('  (skipped background removal: no LITE_AI_DIR)'); }
+
     // ---- text
     await page.click('#tab-text');
     await page.locator('#left-body .preset').first().click();

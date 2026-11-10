@@ -19,3 +19,14 @@ Starter media (stock\)
   Generated for this project and released under CC0 1.0. See stock\LICENSE.txt.
 
 Interface icons were drawn for this project.
+
+
+---------------------------------------------------------------------------
+Background removal
+---------------------------------------------------------------------------
+ONNX Runtime (onnxruntime.dll), Copyright (c) Microsoft Corporation, MIT licence.
+  Full text: ai/ONNXRUNTIME-LICENSE.txt in the app folder.
+U2-Net (u2netp.onnx), Xuebin Qin et al., "U2-Net: Going Deeper with Nested U-Structure for
+  Salient Object Detection", Apache License 2.0. https://github.com/xuebinqin/U-2-Net
+Microsoft Visual C++ runtime (vcruntime140.dll, vcruntime140_1.dll, msvcp140.dll) is redistributed
+  app-locally under Microsoft's redistribution terms.
