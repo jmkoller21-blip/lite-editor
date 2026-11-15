@@ -165,3 +165,5 @@ button.kf.anim { color: var(--c-accent); opacity: .55; }
 button.kf.on { color: var(--c-accent); opacity: 1; }
 button.kf:hover { background: var(--c-surface-2); }
 .prow.kfrow { grid-template-columns: 78px 1fr 58px 22px; }
+
+.btn.sm.on { background: var(--c-accent); color: var(--c-on-accent, #0b0d12); }

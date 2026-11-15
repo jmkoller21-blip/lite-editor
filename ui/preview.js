@@ -1,6 +1,7 @@
 // Preview stage and playback. Uses the browser's own video decoder on the proxy copies the engine
 // makes, so it stays light. Geometry follows the export: each clip is fitted inside the frame, then
 // scaled and moved around the frame centre. Media elements exist only near the playhead.
+import { maskUrl } from './maskshape.js';
 import { fileUrl } from './api.js';
 import {
   S, US, media, clipEnd, selected, findClip, clamp, mutate, beginGesture, endGesture, on, emit,
@@ -167,6 +168,21 @@ function applyVisual(e, c, t, frozen) {
   }
   e.layer.style.transform = `translate(${x}px,${y}px) rotate(${rot}deg) scale(${sc}) ${c.mirror ? 'scaleX(-1)' : ''}`;
   e.layer.style.opacity = String(op);
+  if (c.mask && c.mask.shape && e.kind !== 'text') {
+    // the mask covers the footage itself (not the letterbox), and moves with the clip
+    const mm = media(c.media);
+    const mw = (mm && mm.w) || S.doc.width, mh = (mm && mm.h) || S.doc.height;
+    const fit = Math.min(S.doc.width / mw, S.doc.height / mh) * K;
+    const fw = mw * fit, fh = mh * fit;
+    const lw = e.layer.clientWidth || S.doc.width * K, lh = e.layer.clientHeight || S.doc.height * K;
+    const st = e.layer.style;
+    st.webkitMaskImage = st.maskImage = maskUrl(c.mask);
+    st.webkitMaskSize = st.maskSize = `${fw}px ${fh}px`;
+    st.webkitMaskPosition = st.maskPosition = `${(lw - fw) / 2}px ${(lh - fh) / 2}px`;
+    st.webkitMaskRepeat = st.maskRepeat = 'no-repeat';
+  } else if (e.layer.style.maskImage || e.layer.style.webkitMaskImage) {
+    e.layer.style.webkitMaskImage = e.layer.style.maskImage = '';
+  }
   e.layer.style.display = e.track.hidden ? 'none' : '';
   if (e.kind === 'text') {
     const tx = c.text;

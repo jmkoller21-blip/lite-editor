@@ -124,6 +124,19 @@ const check = (cond, name, detail) => (cond ? ok(name, detail) : bad(name, detai
     await shot('04d-keyframes');
     await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); m.mutate('clear keyframes', () => { delete c.kf; }); m.S.t = 0; m.emit('time'); });
 
+    // ---- shape mask
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.media && x.dur > 1.5e6); m.S.sel = c.id; m.S.t = c.start + 1e5; m.emit('select'); m.emit('time'); });
+    await page.waitForTimeout(200);
+    await page.locator('#props .chips button', { hasText: 'Circle' }).click();
+    await page.waitForTimeout(400);
+    doc = await saved(page, apiCall);
+    check(doc.tracks.flatMap((t) => t.clips).some((c) => c.mask && c.mask.shape === 'ellipse'), 'circle mask is saved on the clip');
+    const masked = await page.evaluate(() => [...document.querySelectorAll('#stage > *, #stage *')].some((n) => (n.style.maskImage || n.style.webkitMaskImage || '').startsWith('url(')));
+    check(masked, 'preview applies the mask');
+    await shot('04e-mask');
+    await page.locator('#props .chips button', { hasText: 'None' }).first().click();
+    await page.waitForTimeout(300);
+
     // ---- background removal (only when the AI runtime is installed for this run)
     const hasAi = await page.evaluate(async () => (await import('/state.js')).S.sys.cutout);
     if (hasAi) {

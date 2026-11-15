@@ -5,6 +5,7 @@ import {
 } from './state.js';
 import { h } from './ui.js';
 import { speedCurveSection } from './speedcurve.js';
+import { MASK_SHAPES, defaultMask } from './maskshape.js';
 import { api, waitJob } from './api.js';
 import { toast } from './ui.js';
 
@@ -190,6 +191,21 @@ function render() {
     const curveBox = speedCurveSection(c, tr, () => { syncs.forEach((f) => f()); document.dispatchEvent(new Event('tlredraw')); });
     syncs.push(() => curveBox.redraw());
     el.append(sec('Speed curve', curveBox));
+  }
+
+  if (visual && kind !== 'text') {
+    const mk = c.mask && c.mask.shape ? c.mask : null;
+    const chips = h('div', { class: 'chips' }, ...MASK_SHAPES.map((sh) => h('button', {
+      class: 'btn sm' + ((mk ? mk.shape : '') === sh.id ? ' on' : ''), type: 'button', text: sh.label,
+      onclick: () => mutate('Mask: ' + sh.label, () => { if (!sh.id) delete c.mask; else c.mask = mk && mk.shape ? Object.assign({}, mk, { shape: sh.id }) : defaultMask(sh.id); }),
+    })));
+    const ms = (label, key, min, max, step, def) => slider(label, () => (c.mask ? c.mask[key] : def), (v) => { if (c.mask) c.mask[key] = v; }, { min, max, step, def, key: 'mask-' + key });
+    el.append(sec('Mask', chips, ...(mk ? [
+      ms('X', 'x', -1, 1, 0.01, 0), ms('Y', 'y', -1, 1, 0.01, 0),
+      ms('Width', 'w', 0.05, 3, 0.01, 0.6), ms('Height', 'h', 0.05, 3, 0.01, 0.6),
+      ms('Rotation', 'rot', -180, 180, 1, 0), ms('Feather', 'feather', 0, 1, 0.01, 0.1),
+      check('Invert', () => c.mask && c.mask.invert, (v) => { if (c.mask) c.mask.invert = v; }),
+    ] : [])));
   }
 
   if (kind === 'video' && m) el.append(cutoutSection(c, m));

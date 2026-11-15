@@ -89,6 +89,8 @@ pub struct Clip {
     pub curve: Option<Vec<(f64, f64)>>,
     /// matte video from background removal (used as the clip's transparency)
     pub cutout: Option<String>,
+    /// shape mask (rectangle, circle, heart, line, mirror)
+    pub mask: Option<Mask>,
     /// keyframes: per property, (position along the clip 0..1, value), linear between
     pub kf: Kf,
     /// edge softness 0..1 and grow/shrink -1..1 for the cut-out edge
@@ -106,6 +108,66 @@ pub struct Clip {
     pub adj: Adjust,
     pub text: Option<TextSpec>,
     pub transition_in: Option<Transition>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Mask {
+    pub shape: String, // rect | ellipse | heart | linear | mirror
+    pub x: f64,        // centre offset, fraction of the frame width (-0.5..0.5)
+    pub y: f64,
+    pub w: f64,        // size as a fraction of the frame
+    pub h: f64,
+    pub rot: f64,      // degrees
+    pub feather: f64,  // 0..1
+    pub invert: bool,
+}
+
+impl Mask {
+    fn from_json(j: Option<&Json>) -> Option<Mask> {
+        let m = j?;
+        let shape = m.str_or("shape", "");
+        if !["rect", "ellipse", "heart", "linear", "mirror"].contains(&shape.as_str()) {
+            return None;
+        }
+        Some(Mask {
+            shape,
+            x: m.f64_or("x", 0.0).clamp(-1.0, 1.0),
+            y: m.f64_or("y", 0.0).clamp(-1.0, 1.0),
+            w: m.f64_or("w", 0.6).clamp(0.02, 4.0),
+            h: m.f64_or("h", 0.6).clamp(0.02, 4.0),
+            rot: m.f64_or("rot", 0.0),
+            feather: m.f64_or("feather", 0.1).clamp(0.0, 1.0),
+            invert: matches!(m.get("invert"), Some(Json::Bool(true))),
+        })
+    }
+
+    /// FFmpeg `geq` expression (0..255) for this mask. X, Y, W, H are the frame's own variables.
+    pub fn geq_expr(&self) -> String {
+        let a = self.rot.to_radians();
+        let (c, s) = (a.cos(), a.sin());
+        let f = self.feather.max(0.002);
+        // st(0)=dx st(1)=dy st(2)=px st(3)=py
+        let mut e = format!(
+            "st(0,X-{:.5}*W);st(1,Y-{:.5}*H);st(2,(ld(0)*{c:.6}+ld(1)*{s:.6})/({w:.5}*W/2));st(3,(-ld(0)*{s:.6}+ld(1)*{c:.6})/({h:.5}*H/2));",
+            0.5 + self.x, 0.5 + self.y, c = c, s = s, w = self.w, h = self.h
+        );
+        let alpha = match self.shape.as_str() {
+            "ellipse" => format!("clip((1-hypot(ld(2),ld(3)))/{:.5},0,1)", f),
+            "rect" => format!("clip((1-max(abs(ld(2)),abs(ld(3))))/{:.5},0,1)", f),
+            "linear" => format!("clip((0-ld(3))/{:.5}+0.5,0,1)", f),
+            "mirror" => format!("clip((1-abs(ld(3)))/{:.5},0,1)", f),
+            _ => {
+                // heart: (x^2+y^2-1)^3 - x^2*y^3 <= 0
+                e.push_str("st(4,ld(2)*1.15);st(5,-ld(3)*1.15);st(6,pow(ld(4)*ld(4)+ld(5)*ld(5)-1,3)-ld(4)*ld(4)*pow(ld(5),3));");
+                format!("clip(0.5-ld(6)/{:.5},0,1)", 0.03 + f * 0.6)
+            }
+        };
+        if self.invert {
+            format!("{}255*(1-{})", e, alpha)
+        } else {
+            format!("{}255*{}", e, alpha)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -316,6 +378,7 @@ impl Project {
                     speed: c.f64_or("speed", 1.0).clamp(0.1, 16.0),
                     curve: parse_curve(c),
                     kf: Kf::from_json(c.get("kf")),
+                    mask: Mask::from_json(c.get("mask")),
                     cutout_soft: c.f64_or("cutout_soft", 0.0).clamp(0.0, 1.0),
                     cutout_grow: c.f64_or("cutout_grow", 0.0).clamp(-1.0, 1.0),
                     cutout: c.get("cutout").and_then(|m| m.as_str()).filter(|m| !m.is_empty()).map(|m| m.to_string()),

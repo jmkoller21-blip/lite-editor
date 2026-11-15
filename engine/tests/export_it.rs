@@ -265,3 +265,37 @@ fn keyframes_move_scale_rotate_and_fade() {
     let late = pixel(&out, 1.9, 320, 180);
     assert!(late.0 < 60, "box ends right, centre should be empty, got {:?}", late);
 }
+
+#[test]
+fn shape_masks_cut_the_clip() {
+    let ff = Ff::locate();
+    assert!(ff.available());
+    let dir = work();
+    let red = gen(&dir, "mred.mp4", "color=c=red", 2, false);
+    let blue = gen(&dir, "mblue.mp4", "color=c=blue", 2, false);
+    let mk = |mask: &str| format!(r##"{{
+      "name":"k","width":640,"height":360,"fps":30,
+      "media":[{{"id":"m1","path":"{red}","kind":"video","dur":2000000,"w":640,"h":360,"has_audio":false}},
+               {{"id":"m2","path":"{blue}","kind":"video","dur":2000000,"w":640,"h":360,"has_audio":false}}],
+      "tracks":[{{"id":"v1","kind":"video","clips":[{{"id":"b","media":"m2","start":0,"dur":2000000}}]}},
+                {{"id":"v2","kind":"video","clips":[{{"id":"r","media":"m1","start":0,"dur":2000000,"mask":{mask}}}]}}]}}"##, red = red, blue = blue, mask = mask);
+    // a circle in the middle: centre red, corner blue
+    let p = Project::from_json(&Json::parse(&mk(r#"{"shape":"ellipse","x":0,"y":0,"w":0.5,"h":0.5,"feather":0.05}"#)).unwrap()).unwrap();
+    let out = run_export(&p, &dir, "mask1", false).unwrap_or_else(|e| panic!("mask export failed: {}", e));
+    let c = pixel(&out, 0.5, 320, 180);
+    let k = pixel(&out, 0.5, 20, 20);
+    assert!(c.0 > 200 && c.2 < 60, "centre of the circle shows the red clip, got {:?}", c);
+    assert!(k.2 > 200 && k.0 < 60, "corner shows the blue clip underneath, got {:?}", k);
+    // inverted: the other way round; moved right: left of centre is blue
+    let p = Project::from_json(&Json::parse(&mk(r#"{"shape":"rect","x":0.25,"y":0,"w":0.4,"h":0.8,"feather":0.02,"invert":true}"#)).unwrap()).unwrap();
+    let out = run_export(&p, &dir, "mask2", false).unwrap_or_else(|e| panic!("mask export failed: {}", e));
+    let hole = pixel(&out, 0.5, 480, 180); // inside the (inverted) rectangle: blue shows
+    let outside = pixel(&out, 0.5, 100, 180);
+    assert!(hole.2 > 200 && hole.0 < 60, "inverted rectangle cuts a hole, got {:?}", hole);
+    assert!(outside.0 > 200 && outside.2 < 60, "outside the rectangle stays red, got {:?}", outside);
+    // heart, line and mirror just have to run
+    for shape in ["heart", "linear", "mirror"] {
+        let p = Project::from_json(&Json::parse(&mk(&format!(r#"{{"shape":"{}","w":0.6,"h":0.6,"rot":20,"feather":0.2}}"#, shape))).unwrap()).unwrap();
+        run_export(&p, &dir, "mask3", false).unwrap_or_else(|e| panic!("{} mask export failed: {}", shape, e));
+    }
+}

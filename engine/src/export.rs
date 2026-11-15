@@ -265,25 +265,54 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                             Some(segs) => format!("setpts=PTS-STARTPTS,{}", curve_setpts(&segs)),
                             None => format!("setpts=(PTS-STARTPTS)/{:.6}", c.speed),
                         };
-                        if let Some(mi) = mask_idx {
-                            // edge controls: soften with a blur, grow or shrink by steepening around a shifted midpoint
-                            let mut edge = String::new();
-                            if c.cutout_soft > 0.01 {
-                                let _ = write!(edge, ",gblur=sigma={:.2}", c.cutout_soft * 5.0 + 0.1);
+                        let shape = if m.kind == MediaKind::Video || m.kind == MediaKind::Image { c.mask.as_ref() } else { None };
+                        let shape_on = shape.is_some();
+                        if mask_idx.is_some() || shape.is_some() {
+                            // alpha from the AI matte and/or the shape mask, both sized to the footage
+                            let mut cur_v = format!("cv{}", idx);
+                            if m.kind == MediaKind::Image {
+                                let _ = write!(g, "[{}:v]{},fps={:.4}[cv{}];\n", idx, retime, fps, idx);
+                            } else {
+                                let _ = write!(g, "[{}:v]{},fps={:.4}[cv{}];\n", idx, retime, fps, idx);
                             }
-                            if c.cutout_grow.abs() > 0.01 {
-                                let _ = write!(edge, ",lutyuv=y='clip((val-128+{:.1})*3+128,0,255)'", c.cutout_grow * 50.0);
+                            let mut alpha_labels: Vec<String> = Vec::new();
+                            if let Some(mi) = mask_idx {
+                                let mut edge = String::new();
+                                if c.cutout_soft > 0.01 {
+                                    let _ = write!(edge, ",gblur=sigma={:.2}", c.cutout_soft * 5.0 + 0.1);
+                                }
+                                if c.cutout_grow.abs() > 0.01 {
+                                    let _ = write!(edge, ",lutyuv=y='clip((val-128+{:.1})*3+128,0,255)'", c.cutout_grow * 50.0);
+                                }
+                                let _ = write!(
+                                    g,
+                                    "[{m}:v]{r},fps={fps:.4},format=gray{edge}[cm{i}];\n[cm{i}][{cur}]scale2ref=flags=bilinear[cs{i}][cr{i}];\n",
+                                    i = idx, m = mi, r = retime, fps = fps, edge = edge, cur = cur_v
+                                );
+                                cur_v = format!("cr{}", idx);
+                                alpha_labels.push(format!("cs{}", idx));
                             }
-                            let _ = write!(
-                                g,
-                                "[{i}:v]{r},fps={fps:.4}[cv{i}];\n[{m}:v]{r},fps={fps:.4},format=gray{edge}[cm{i}];\n[cm{i}][cv{i}]scale2ref=flags=bilinear[cs{i}][cr{i}];\n[cr{i}][cs{i}]alphamerge[cx{i}];\n",
-                                i = idx, m = mi, r = retime, fps = fps, edge = edge
-                            );
+                            if let Some(sm) = shape {
+                                let _ = write!(
+                                    g,
+                                    "color=c=black:s=640x360:r={fps:.4}:d={d:.3},format=gray,geq=lum='{e}'[sh{i}];\n[sh{i}][{cur}]scale2ref=flags=bilinear[ss{i}][cq{i}];\n",
+                                    fps = fps, d = wn.dur as f64 / 1e6 + 0.5, e = sm.geq_expr(), i = idx, cur = cur_v
+                                );
+                                cur_v = format!("cq{}", idx);
+                                alpha_labels.push(format!("ss{}", idx));
+                            }
+                            let am = if alpha_labels.len() == 2 {
+                                let _ = write!(g, "[{}][{}]blend=all_mode=multiply[am{}];\n", alpha_labels[0], alpha_labels[1], idx);
+                                format!("am{}", idx)
+                            } else {
+                                alpha_labels[0].clone()
+                            };
+                            let _ = write!(g, "[{}][{}]alphamerge[cx{}];\n", cur_v, am, idx);
                             let _ = write!(f, "[cx{}]", idx);
                         } else {
                             let _ = write!(f, "[{}:v]{},fps={:.4},", idx, retime, fps);
                         }
-                        let (yuv_fmt, gbr_fmt) = if mask_idx.is_some() { ("yuva420p", "gbrap") } else { ("yuv420p", "gbrp") };
+                        let (yuv_fmt, gbr_fmt) = if mask_idx.is_some() || shape_on { ("yuva420p", "gbrap") } else { ("yuv420p", "gbrp") };
                         let _ = write!(f, "scale={}:{}:force_original_aspect_ratio=decrease:flags=bilinear,", w, h);
                         // zoom-in transition scales per frame; otherwise the static user scale
                         let user_scale = c.scale;
