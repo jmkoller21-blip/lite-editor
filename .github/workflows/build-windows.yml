@@ -94,7 +94,11 @@ jobs:
           $r = @()
           $r += "Engine tests on Windows: ${{ steps.tests.outcome }}"
           if (Test-Path test-output.txt) {
-            $r += (Select-String -Path test-output.txt -Pattern 'test result|FAILED|panicked|failed' -Context 0,3 | Select-Object -Last 14 | ForEach-Object { $_.Line; $_.Context.PostContext | ForEach-Object { '    ' + $_.Substring(0, [Math]::Min(400, $_.Length)) } })
+            $r += (Select-String -Path test-output.txt -Pattern 'test result|FAILED' | Select-Object -Last 14 | ForEach-Object { $_.Line })
+            $lines = Get-Content test-output.txt
+            for ($n = 0; $n -lt $lines.Count; $n++) {
+              if ($lines[$n] -match '^---- .* stdout ----') { $r += $lines[$n..([Math]::Min($n + 8, $lines.Count - 1))] | ForEach-Object { '    ' + $_.Substring(0, [Math]::Min(500, $_.Length)) } }
+            }
           }
           $r += "Background removal tests on Windows: ${{ steps.cutouttests.outcome }}"
           if (Test-Path cutout-output.txt) {
