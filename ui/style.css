@@ -158,3 +158,10 @@ canvas.curve { width: 100%; height: 130px; display: block; border-radius: var(--
 
 .bar { height: 4px; background: var(--c-border); border-radius: 2px; margin: var(--sp-2) 0; overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; background: var(--c-accent); }
+
+/* keyframe diamond */
+button.kf { background: none; border: 0; color: var(--c-text-muted); font-size: 14px; line-height: 1; padding: 2px 4px; cursor: pointer; border-radius: 4px; }
+button.kf.anim { color: var(--c-accent); opacity: .55; }
+button.kf.on { color: var(--c-accent); opacity: 1; }
+button.kf:hover { background: var(--c-surface-2); }
+.prow.kfrow { grid-template-columns: 78px 1fr 58px 22px; }

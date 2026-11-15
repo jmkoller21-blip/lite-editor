@@ -107,6 +107,23 @@ const check = (cond, name, detail) => (cond ? ok(name, detail) : bad(name, detai
     const after = doc.tracks.flatMap((t) => t.clips).map((c) => c.dur).join(',');
     check(!doc.tracks.flatMap((t) => t.clips).some((c) => c.curve) && after === before, 'Flat removes the curve and restores the length', before + ' -> ' + after);
 
+    // ---- keyframes on the selected clip: scale at 2 s, then at 4 s
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.media && x.dur > 3.5e6); m.S.sel = c.id; m.S.t = c.start + 1e6; m.emit('select'); m.emit('time'); });
+    await page.waitForTimeout(200);
+    await page.locator('#props button[aria-label="Scale keyframe"]').click();
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); m.S.t = c.start + 3e6; m.emit('time'); });
+    await page.waitForTimeout(200);
+    await page.fill('#props input[aria-label="Scale value"]', '2');
+    await page.press('#props input[aria-label="Scale value"]', 'Enter');
+    await page.waitForTimeout(300);
+    doc = await saved(page, apiCall);
+    const kc = doc.tracks.flatMap((t) => t.clips).find((c) => c.kf && c.kf.scale);
+    check(kc && kc.kf.scale.length === 2 && Math.abs(kc.kf.scale[1][1] - 2) < 0.01, 'scale keyframes are saved', JSON.stringify(kc && kc.kf));
+    const mid = await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); return m.propAt(c, 'scale', c.start + 2e6); });
+    check(mid > 1.3 && mid < 1.7, 'scale is animated between keyframes', 'mid=' + mid);
+    await shot('04d-keyframes');
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); m.mutate('clear keyframes', () => { delete c.kf; }); m.S.t = 0; m.emit('time'); });
+
     // ---- background removal (only when the AI runtime is installed for this run)
     const hasAi = await page.evaluate(async () => (await import('/state.js')).S.sys.cutout);
     if (hasAi) {

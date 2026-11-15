@@ -89,6 +89,8 @@ pub struct Clip {
     pub curve: Option<Vec<(f64, f64)>>,
     /// matte video from background removal (used as the clip's transparency)
     pub cutout: Option<String>,
+    /// keyframes: per property, (position along the clip 0..1, value), linear between
+    pub kf: Kf,
     /// edge softness 0..1 and grow/shrink -1..1 for the cut-out edge
     pub cutout_soft: f64,
     pub cutout_grow: f64,
@@ -104,6 +106,49 @@ pub struct Clip {
     pub adj: Adjust,
     pub text: Option<TextSpec>,
     pub transition_in: Option<Transition>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Kf {
+    pub x: Vec<(f64, f64)>,
+    pub y: Vec<(f64, f64)>,
+    pub scale: Vec<(f64, f64)>,
+    pub rot: Vec<(f64, f64)>,
+    pub opacity: Vec<(f64, f64)>,
+}
+
+fn parse_kf_track(j: Option<&Json>) -> Vec<(f64, f64)> {
+    let mut v: Vec<(f64, f64)> = match j {
+        Some(a) => a
+            .as_arr()
+            .iter()
+            .filter_map(|p| {
+                let a = p.as_arr();
+                if a.len() < 2 {
+                    return None;
+                }
+                Some((a[0].as_f64()?.clamp(0.0, 1.0), a[1].as_f64()?))
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    v
+}
+
+impl Kf {
+    pub fn from_json(j: Option<&Json>) -> Kf {
+        match j {
+            Some(k) => Kf {
+                x: parse_kf_track(k.get("x")),
+                y: parse_kf_track(k.get("y")),
+                scale: parse_kf_track(k.get("scale")),
+                rot: parse_kf_track(k.get("rot")),
+                opacity: parse_kf_track(k.get("opacity")),
+            },
+            None => Kf::default(),
+        }
+    }
 }
 
 impl Clip {
@@ -270,6 +315,7 @@ impl Project {
                     src_in: c.i64_or("in", 0).max(0),
                     speed: c.f64_or("speed", 1.0).clamp(0.1, 16.0),
                     curve: parse_curve(c),
+                    kf: Kf::from_json(c.get("kf")),
                     cutout_soft: c.f64_or("cutout_soft", 0.0).clamp(0.0, 1.0),
                     cutout_grow: c.f64_or("cutout_grow", 0.0).clamp(-1.0, 1.0),
                     cutout: c.get("cutout").and_then(|m| m.as_str()).filter(|m| !m.is_empty()).map(|m| m.to_string()),

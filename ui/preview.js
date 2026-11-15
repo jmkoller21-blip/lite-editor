@@ -4,7 +4,7 @@
 import { fileUrl } from './api.js';
 import {
   S, US, media, clipEnd, selected, findClip, clamp, mutate, beginGesture, endGesture, on, emit,
-  duration, clipKind, frameUs, curveSpeedAt, srcOffset,
+  duration, clipKind, frameUs, curveSpeedAt, srcOffset, propAt,
 } from './state.js';
 
 const stage = document.getElementById('stage');
@@ -148,7 +148,8 @@ function cssFilter(a, k) {
 }
 
 function applyVisual(e, c, t, frozen) {
-  let x = c.x * K, y = c.y * K, sc = c.scale, op = c.opacity;
+  let x = propAt(c, 'x', t) * K, y = propAt(c, 'y', t) * K, sc = propAt(c, 'scale', t), op = propAt(c, 'opacity', t);
+  const rot = propAt(c, 'rot', t);
   const tr = c.transition_in;
   if (tr && !frozen && e.kind !== 'text') {
     const d = Math.max(1, Math.min(tr.dur, c.dur));
@@ -164,7 +165,7 @@ function applyVisual(e, c, t, frozen) {
       }
     }
   }
-  e.layer.style.transform = `translate(${x}px,${y}px) rotate(${c.rot}deg) scale(${sc}) ${c.mirror ? 'scaleX(-1)' : ''}`;
+  e.layer.style.transform = `translate(${x}px,${y}px) rotate(${rot}deg) scale(${sc}) ${c.mirror ? 'scaleX(-1)' : ''}`;
   e.layer.style.opacity = String(op);
   e.layer.style.display = e.track.hidden ? 'none' : '';
   if (e.kind === 'text') {
@@ -343,10 +344,10 @@ function geom(e, c) {
     const m = media(c.media);
     const mw = (m && m.w) || W, mh = (m && m.h) || H;
     const s = Math.min(W / mw, H / mh);
-    w = mw * s * K * c.scale; h = mh * s * K * c.scale;
+    w = mw * s * K * propAt(c, 'scale', S.t); h = mh * s * K * propAt(c, 'scale', S.t);
   }
-  const cx = stage.clientWidth / 2 + c.x * K;
-  const cy = stage.clientHeight / 2 + c.y * K;
+  const cx = stage.clientWidth / 2 + propAt(c, 'x', S.t) * K;
+  const cy = stage.clientHeight / 2 + propAt(c, 'y', S.t) * K;
   return { w, h, cx, cy };
 }
 

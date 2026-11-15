@@ -243,3 +243,25 @@ fn speed_curve_retimes_the_clip() {
     let early = pixel(&out, 0.3, 5, 5);
     assert!(early.0 > 200, "red at 0.3 s, got {:?}", early);
 }
+
+#[test]
+fn keyframes_move_scale_rotate_and_fade() {
+    let ff = Ff::locate();
+    assert!(ff.available());
+    let dir = work();
+    let red = gen(&dir, "kfred.mp4", "color=c=red", 2, false);
+    let j = format!(r##"{{
+      "name":"k","width":640,"height":360,"fps":30,
+      "media":[{{"id":"m1","path":"{red}","kind":"video","dur":2000000,"w":640,"h":360,"has_audio":false}}],
+      "tracks":[{{"id":"v1","kind":"video","clips":[
+        {{"id":"c1","media":"m1","start":0,"dur":2000000,"in":0,"speed":1,
+          "kf":{{"x":[[0,-200],[1,200]],"scale":[[0,0.3],[1,0.3]],"rot":[[0,0],[1,45]],"opacity":[[0,1],[1,1]]}}}}]}}]}}"##, red = red);
+    let p = Project::from_json(&Json::parse(&j).unwrap()).unwrap();
+    let out = run_export(&p, &dir, "kf", false).unwrap_or_else(|e| panic!("keyframe export failed: {}", e));
+    let early = pixel(&out, 0.1, 320, 180);
+    assert!(early.0 < 60, "box starts left, centre should be empty, got {:?}", early);
+    let mid = pixel(&out, 1.0, 320, 180);
+    assert!(mid.0 > 200 && mid.1 < 60, "box passes the centre at 1 s, got {:?}", mid);
+    let late = pixel(&out, 1.9, 320, 180);
+    assert!(late.0 < 60, "box ends right, centre should be empty, got {:?}", late);
+}

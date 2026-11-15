@@ -239,6 +239,11 @@ export function splitAt(t) {
         c.curve = lc;
         c.speed = curveAvg(lc);
       }
+      if (c.kf) {
+        const rk = cropKf(c, u, 1), lk = cropKf(c, 0, u);
+        if (rk) right.kf = rk; else delete right.kf;
+        if (lk) c.kf = lk; else delete c.kf;
+      }
       right.transition_in = null;
       right.fade_in = 0;
       c.dur = t - c.start;
@@ -260,12 +265,14 @@ export function trimSide(side, t) {
       const u = (t - c.start) / c.dur;
       c.in += Math.round(srcOffset(c, t - c.start));
       if (c.curve) { c.curve = cropCurve(c, u, 1); c.speed = curveAvg(c.curve); }
+      if (c.kf) { const k = cropKf(c, u, 1); if (k) c.kf = k; else delete c.kf; }
       c.dur = clipEnd(c) - t;
       c.start = t;
       c.fade_in = 0;
       c.transition_in = null;
     } else {
       if (c.curve) { c.curve = cropCurve(c, 0, (t - c.start) / c.dur); c.speed = curveAvg(c.curve); }
+      if (c.kf) { const k = cropKf(c, 0, (t - c.start) / c.dur); if (k) c.kf = k; else delete c.kf; }
       c.dur = t - c.start;
       c.fade_out = 0;
     }
@@ -362,6 +369,70 @@ export function setCurve(c, tr, k) {
   if (pts) { c.curve = pts; c.flatSpeed = c.flatSpeed || c.speed; } else { delete c.curve; delete c.flatSpeed; }
   c.speed = avg;
   c.dur = dur;
+}
+
+// ---- keyframes ---------------------------------------------------------
+// c.kf = { x:[[u,v],...], y, scale, rot, opacity }: u is the position along the clip (0..1).
+// A property with keyframes follows them (linear between points); otherwise it is the plain c[prop].
+export const KF_PROPS = ['x', 'y', 'scale', 'rot', 'opacity'];
+export function kfTrack(c, p) { return c.kf && c.kf[p] && c.kf[p].length ? c.kf[p] : null; }
+export function kfValue(k, u) {
+  if (u <= k[0][0]) return k[0][1];
+  for (let i = 1; i < k.length; i++) {
+    if (u <= k[i][0]) {
+      const [u0, v0] = k[i - 1], [u1, v1] = k[i];
+      return u1 === u0 ? v1 : v0 + (v1 - v0) * ((u - u0) / (u1 - u0));
+    }
+  }
+  return k[k.length - 1][1];
+}
+export function propAt(c, p, t) {
+  const k = kfTrack(c, p);
+  return k ? kfValue(k, clamp((t - c.start) / Math.max(1, c.dur), 0, 1)) : c[p];
+}
+const KF_TOL = 0.004; // keyframes closer than this (fraction of the clip) count as the same one
+export function kfIndexAt(c, p, t) {
+  const k = kfTrack(c, p);
+  if (!k) return -1;
+  const u = (t - c.start) / Math.max(1, c.dur);
+  return k.findIndex(([x]) => Math.abs(x - u) < KF_TOL);
+}
+export function hasKfAt(c, p, t) { return kfIndexAt(c, p, t) >= 0; }
+export function anyKf(c) { return KF_PROPS.some((p) => kfTrack(c, p)); }
+function putKf(c, p, u, v) {
+  c.kf = c.kf || {};
+  const k = c.kf[p] = c.kf[p] || [];
+  const i = k.findIndex(([x]) => Math.abs(x - u) < KF_TOL);
+  if (i >= 0) k[i][1] = v; else { k.push([u, v]); k.sort((a, b) => a[0] - b[0]); }
+}
+// change a property at the playhead: edits or adds a keyframe when the property is animated
+export function setPropAt(c, p, t, v) {
+  if (kfTrack(c, p)) putKf(c, p, clamp((t - c.start) / Math.max(1, c.dur), 0, 1), v);
+  else c[p] = v;
+}
+// the diamond button: add a keyframe here with the current value, or remove the one here
+export function toggleKf(c, p, t) {
+  const u = clamp((t - c.start) / Math.max(1, c.dur), 0, 1);
+  const i = kfIndexAt(c, p, t);
+  if (i < 0) { putKf(c, p, u, propAt(c, p, t)); return; }
+  const k = c.kf[p];
+  if (k.length === 1) c[p] = k[0][1];
+  k.splice(i, 1);
+  if (!k.length) delete c.kf[p];
+  if (!Object.keys(c.kf).length) delete c.kf;
+}
+export function cropKf(c, u0, u1) {
+  if (!c.kf) return null;
+  const span = Math.max(1e-6, u1 - u0), out = {};
+  for (const p of KF_PROPS) {
+    const k = kfTrack(c, p);
+    if (!k) continue;
+    const pts = [[0, kfValue(k, u0)]];
+    for (const [x, v] of k) if (x > u0 + 1e-6 && x < u1 - 1e-6) pts.push([(x - u0) / span, v]);
+    pts.push([1, kfValue(k, u1)]);
+    out[p] = pts;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 export function setSpeed(c, tr, speed) {

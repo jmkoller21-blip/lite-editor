@@ -57,6 +57,30 @@ fn esc_path(p: &str) -> String {
     p.replace('\\', "/").replace(':', "\\:").replace('\'', "\\'")
 }
 
+/// Piecewise-linear FFmpeg expression of a keyframe track. `tvar` is an expression for seconds
+/// since the start of the window; `skip_s` shifts it to seconds since the clip start.
+fn kf_expr(pts: &[(f64, f64)], clip_dur_s: f64, tvar: &str, skip_s: f64) -> String {
+    if pts.len() == 1 {
+        return format!("({:.5})", pts[0].1);
+    }
+    let tau = format!("({}+{:.6})", tvar, skip_s);
+    let last = pts[pts.len() - 1];
+    let mut e = format!("{:.5}", last.1);
+    for i in (0..pts.len() - 1).rev() {
+        let (u0, v0) = pts[i];
+        let (u1, v1) = pts[i + 1];
+        let (t0, t1) = (u0 * clip_dur_s, u1 * clip_dur_s);
+        let seg = if t1 - t0 < 1e-6 {
+            format!("{:.5}", v1)
+        } else {
+            format!("{:.5}+({:.5})*({}-{:.6})/{:.6}", v0, v1 - v0, tau, t0, t1 - t0)
+        };
+        e = format!("if(lt({},{:.6}),{},{})", tau, t1, seg, e);
+    }
+    // before the first keyframe the value stays at the first one
+    format!("if(lt({},{:.6}),{:.5},{})", tau, pts[0].0 * clip_dur_s, pts[0].1, e)
+}
+
 const CURVE_SEGS: i64 = 24;
 
 /// A speed-curved clip cut into short pieces of constant speed: (source start, source end,
@@ -273,6 +297,14 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                                 "scale=w='max(2,trunc(iw*{:.5}*(0.5+0.5*min(1,t/{:.4}))/2)*2)':h='max(2,trunc(ih*{:.5}*(0.5+0.5*min(1,t/{:.4}))/2)*2)':eval=frame,",
                                 user_scale, d, user_scale, d
                             );
+                        } else if !c.kf.scale.is_empty() {
+                            // animated scale: per-frame resize, applied last (see zoom note above)
+                            let ex = kf_expr(&c.kf.scale, c.dur as f64 / 1e6, "t", wn.skip as f64 / 1e6);
+                            let _ = write!(
+                                zoom_scale,
+                                "scale=w='max(2,trunc(iw*({e})/2)*2)':h='max(2,trunc(ih*({e})/2)*2)':eval=frame,",
+                                e = ex
+                            );
                         } else if (user_scale - 1.0).abs() > 0.0005 {
                             let _ = write!(
                                 f,
@@ -306,10 +338,19 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                             }
                         }
                         f.push_str("format=rgba,");
-                        if c.opacity < 0.999 {
+                        if !c.kf.opacity.is_empty() {
+                            let ex = kf_expr(&c.kf.opacity, c.dur as f64 / 1e6, "T", wn.skip as f64 / 1e6);
+                            let _ = write!(f, "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*clip({},0,1)',", ex);
+                        } else if c.opacity < 0.999 {
                             let _ = write!(f, "colorchannelmixer=aa={:.4},", c.opacity);
                         }
-                        if c.rot.abs() > 0.01 {
+                        if !c.kf.rot.is_empty() {
+                            // fixed square canvas big enough for any angle and scale, so the size never changes mid-stream
+                            let max_s = c.kf.scale.iter().map(|p| p.1).fold(c.scale, f64::max).clamp(1.0, 4.0);
+                            let side = ((((w * w + h * h) as f64).sqrt() * max_s / 2.0).ceil() * 2.0) as i64;
+                            let ex = kf_expr(&c.kf.rot, c.dur as f64 / 1e6, "t", wn.skip as f64 / 1e6);
+                            let _ = write!(f, "rotate=a='({})*PI/180':ow={}:oh={}:c=black@0,", ex, side, side);
+                        } else if c.rot.abs() > 0.01 {
                             let rad = c.rot.to_radians();
                             let _ = write!(f, "rotate=a={:.6}:ow='rotw({:.6})':oh='roth({:.6})':c=black@0,", rad, rad, rad);
                         }
@@ -330,6 +371,13 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                         let cx = c.x * k;
                         let cy = c.y * k;
                         let (mut xe, mut ye) = (format!("(W-w)/2+({:.3})", cx), format!("(H-h)/2+({:.3})", cy));
+                        let tl = format!("(t-{:.6})", wn.start as f64 / 1e6);
+                        if !c.kf.x.is_empty() {
+                            xe = format!("(W-w)/2+({})*{:.5}", kf_expr(&c.kf.x, c.dur as f64 / 1e6, &tl, wn.skip as f64 / 1e6), k);
+                        }
+                        if !c.kf.y.is_empty() {
+                            ye = format!("(H-h)/2+({})*{:.5}", kf_expr(&c.kf.y, c.dur as f64 / 1e6, &tl, wn.skip as f64 / 1e6), k);
+                        }
                         if let Some(t) = wn.trans {
                             let d = t.dur.min(c.dur) as f64 / 1e6;
                             let prog = format!("(1-min(1,max(0,(t-{:.6})/{:.4})))", wn.start as f64 / 1e6, d);

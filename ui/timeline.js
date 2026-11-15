@@ -292,6 +292,19 @@ function drawClip(c, tr, y) {
     ctx.lineWidth = 1; ctx.fillStyle = C.accent;
     ctx.fillRect(x0 + 2, top + h / 2 - 7, 3, 14); ctx.fillRect(x1 - 5, top + h / 2 - 7, 3, 14);
   }
+  // keyframe diamonds along the bottom edge of the clip
+  if (c.kf) {
+    const seen = new Set();
+    for (const p of Object.keys(c.kf)) for (const [u] of c.kf[p]) {
+      const key = Math.round(u * 1000);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const dx = x0 + u * (x1 - x0), dy = top + h - 8;
+      ctx.fillStyle = '#ffd24a'; ctx.strokeStyle = 'rgba(0,0,0,.6)';
+      ctx.beginPath(); ctx.moveTo(dx, dy - 5); ctx.lineTo(dx + 5, dy); ctx.lineTo(dx, dy + 5); ctx.lineTo(dx - 5, dy); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
+  }
 }
 function draw() {
   if (!S.doc) return;

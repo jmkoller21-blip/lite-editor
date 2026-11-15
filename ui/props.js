@@ -1,6 +1,7 @@
 // Properties panel: edits the selected clip. Every change is one undoable step per drag.
 import {
   S, US, on, mutate, selected, media, clipKind, setSpeed, deleteClip, duration, clamp, defaultAdj, fmtDur,
+  propAt, kfTrack, hasKfAt, setPropAt, toggleKf,
 } from './state.js';
 import { h } from './ui.js';
 import { speedCurveSection } from './speedcurve.js';
@@ -23,6 +24,7 @@ export function initProps() {
   on('select', render);
   on('change', (d) => { if (d && d.source === 'prop') return; render(); });
   on('propsrefresh', () => syncs.forEach((f) => f()));
+  on('time', () => syncs.forEach((f) => f()));
 }
 
 const shown = (v, step) => {
@@ -32,23 +34,41 @@ const shown = (v, step) => {
 
 function sec(title, ...rows) { return h('div', { class: 'sec' }, h('h4', { text: title }), ...rows); }
 
-function slider(label, get, set, { min, max, step, def, key }) {
+function slider(label, get, set, { min, max, step, def, key, kf }) {
   const range = h('input', { type: 'range', min, max, step, 'aria-label': label });
   const num = h('input', { type: 'number', class: 'field', min, max, step, 'aria-label': label + ' value' });
-  const sync = () => { const v = get(); range.value = v; num.value = shown(v, step); };
+  const diamond = kf ? h('button', { class: 'kf', type: 'button', title: 'Add or remove a keyframe at the playhead', 'aria-label': label + ' keyframe' }, '◆') : null;
+  const clipNow = () => (S.doc && S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === S.sel)) || null;
+  const sync = () => {
+    const c = kf ? clipNow() : null;
+    const v = c ? propAt(c, kf, S.t) : get();
+    range.value = v; num.value = shown(v, step);
+    if (diamond && c) { diamond.classList.toggle('on', hasKfAt(c, kf, S.t)); diamond.classList.toggle('anim', !!kfTrack(c, kf)); }
+  };
   const apply = (v) => {
     if (!Number.isFinite(v)) { sync(); return; }
     v = clamp(v, min, max);
-    mutate(label, () => set(v), { coalesce: key || label, source: 'prop' });
+    if (kf) {
+      const c = clipNow();
+      if (c) mutate(label, () => setPropAt(c, kf, S.t, v), { coalesce: (key || label) + ':' + Math.round(S.t / 1000), source: 'prop' });
+    } else {
+      mutate(label, () => set(v), { coalesce: key || label, source: 'prop' });
+    }
     sync();
   };
+  if (diamond) diamond.addEventListener('click', () => {
+    const c = clipNow();
+    if (!c) return;
+    mutate('Keyframe ' + label, () => toggleKf(c, kf, S.t), { source: 'prop' });
+    sync();
+  });
   range.addEventListener('input', () => apply(parseFloat(range.value)));
   num.addEventListener('change', () => apply(parseFloat(num.value)));
   if (def !== undefined) range.addEventListener('dblclick', () => apply(def));
   range.title = def !== undefined ? 'Double-click to reset' : '';
   syncs.push(sync);
   sync();
-  return h('div', { class: 'prow' }, h('label', { text: label }), range, num);
+  return h('div', { class: 'prow' + (diamond ? ' kfrow' : '') }, h('label', { text: label }), range, num, ...(diamond ? [diamond] : []));
 }
 
 function check(label, get, set) {
@@ -155,11 +175,11 @@ function render() {
 
   if (visual) {
     el.append(sec('Position and size',
-      slider('X', () => c.x, (v) => { c.x = Math.round(v); }, { min: -S.doc.width, max: S.doc.width, step: 1, def: 0 }),
-      slider('Y', () => c.y, (v) => { c.y = Math.round(v); }, { min: -S.doc.height, max: S.doc.height, step: 1, def: 0 }),
-      slider('Scale', () => c.scale, (v) => { c.scale = v; }, { min: 0.1, max: 4, step: 0.01, def: 1 }),
-      slider('Rotation', () => c.rot, (v) => { c.rot = v; }, { min: -180, max: 180, step: 1, def: 0 }),
-      slider('Opacity', () => c.opacity, (v) => { c.opacity = v; }, { min: 0, max: 1, step: 0.01, def: 1 }),
+      slider('X', () => c.x, (v) => { c.x = Math.round(v); }, { min: -S.doc.width, max: S.doc.width, step: 1, def: 0, kf: 'x' }),
+      slider('Y', () => c.y, (v) => { c.y = Math.round(v); }, { min: -S.doc.height, max: S.doc.height, step: 1, def: 0, kf: 'y' }),
+      slider('Scale', () => c.scale, (v) => { c.scale = v; }, { min: 0.1, max: 4, step: 0.01, def: 1, kf: 'scale' }),
+      slider('Rotation', () => c.rot, (v) => { c.rot = v; }, { min: -180, max: 180, step: 1, def: 0, kf: 'rot' }),
+      slider('Opacity', () => c.opacity, (v) => { c.opacity = v; }, { min: 0, max: 1, step: 0.01, def: 1, kf: 'opacity' }),
       kind !== 'text' ? check('Mirror', () => c.mirror, (v) => { c.mirror = v; }) : null));
   }
 
