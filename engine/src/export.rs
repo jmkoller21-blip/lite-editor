@@ -223,6 +223,9 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                     // background removal: the matte video is a second input, cut exactly like the footage
                     let mut mask_idx: Option<usize> = None;
                     if let (Some(mp), MediaKind::Video, false) = (c.cutout.as_ref(), m.kind, s.audio_only) {
+                        if !std::path::Path::new(mp).exists() {
+                            return Err("A background-removal file is missing. Click \"Bring the background back\" on that clip and remove the background again.".to_string());
+                        }
                         inputs.extend([
                             "-ss".into(), secs(wn.src_in), "-t".into(), secs(src_len + 100_000),
                             "-i".into(), mp.clone(),
@@ -239,10 +242,18 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                             None => format!("setpts=(PTS-STARTPTS)/{:.6}", c.speed),
                         };
                         if let Some(mi) = mask_idx {
+                            // edge controls: soften with a blur, grow or shrink by steepening around a shifted midpoint
+                            let mut edge = String::new();
+                            if c.cutout_soft > 0.01 {
+                                let _ = write!(edge, ",gblur=sigma={:.2}", c.cutout_soft * 5.0 + 0.1);
+                            }
+                            if c.cutout_grow.abs() > 0.01 {
+                                let _ = write!(edge, ",lutyuv=y='clip((val-128+{:.1})*3+128,0,255)'", c.cutout_grow * 50.0);
+                            }
                             let _ = write!(
                                 g,
-                                "[{i}:v]{r},fps={fps:.4}[cv{i}];\n[{m}:v]{r},fps={fps:.4},format=gray[cm{i}];\n[cm{i}][cv{i}]scale2ref=flags=bilinear[cs{i}][cr{i}];\n[cr{i}][cs{i}]alphamerge[cx{i}];\n",
-                                i = idx, m = mi, r = retime, fps = fps
+                                "[{i}:v]{r},fps={fps:.4}[cv{i}];\n[{m}:v]{r},fps={fps:.4},format=gray{edge}[cm{i}];\n[cm{i}][cv{i}]scale2ref=flags=bilinear[cs{i}][cr{i}];\n[cr{i}][cs{i}]alphamerge[cx{i}];\n",
+                                i = idx, m = mi, r = retime, fps = fps, edge = edge
                             );
                             let _ = write!(f, "[cx{}]", idx);
                         } else {

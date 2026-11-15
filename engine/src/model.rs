@@ -89,6 +89,9 @@ pub struct Clip {
     pub curve: Option<Vec<(f64, f64)>>,
     /// matte video from background removal (used as the clip's transparency)
     pub cutout: Option<String>,
+    /// edge softness 0..1 and grow/shrink -1..1 for the cut-out edge
+    pub cutout_soft: f64,
+    pub cutout_grow: f64,
     pub x: f64,
     pub y: f64,
     pub scale: f64,
@@ -267,6 +270,8 @@ impl Project {
                     src_in: c.i64_or("in", 0).max(0),
                     speed: c.f64_or("speed", 1.0).clamp(0.1, 16.0),
                     curve: parse_curve(c),
+                    cutout_soft: c.f64_or("cutout_soft", 0.0).clamp(0.0, 1.0),
+                    cutout_grow: c.f64_or("cutout_grow", 0.0).clamp(-1.0, 1.0),
                     cutout: c.get("cutout").and_then(|m| m.as_str()).filter(|m| !m.is_empty()).map(|m| m.to_string()),
                     x: c.f64_or("x", 0.0),
                     y: c.f64_or("y", 0.0),

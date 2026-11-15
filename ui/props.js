@@ -60,12 +60,14 @@ function check(label, get, set) {
 }
 
 let cutoutBusy = new Set(); // media ids being processed
+const cutoutJobs = new Map(); // media id -> running job id (so it can be cancelled)
 
 // Background removal: the AI matte is made once per video (kept in the cache), then switched on or off per clip.
 function cutoutSection(c, m) {
   const status = h('div', { class: 'hint' });
   const bar = h('div', { class: 'bar', hidden: true }, h('i'));
   const btn = h('button', { class: 'btn', type: 'button' });
+  const stop = h('button', { class: 'btn', type: 'button', text: 'Cancel', hidden: true, onclick: () => { const j = cutoutJobs.get(m.id); if (j) api('job_cancel', { id: j }); } });
   const busy = cutoutBusy.has(m.id);
   const paint = () => {
     btn.textContent = c.cutout ? 'Bring the background back' : 'Remove background';
@@ -86,7 +88,11 @@ function cutoutSection(c, m) {
       const r = await api('cutout_start', { id: m.id, path: m.path, proxy: m.proxy || '', dur: m.dur / US });
       let mask = r.mask;
       if (r.job) {
+        cutoutJobs.set(m.id, r.job);
+        stop.hidden = false;
         const j = await waitJob(r.job, (p) => { bar.firstChild.style.width = p + '%'; });
+        cutoutJobs.delete(m.id);
+        if (j.state === 'cancelled' || /cancel/i.test(j.message || '')) return;
         if (j.state !== 'done') throw new Error(j.message || 'Background removal did not finish');
         mask = j.result.mask;
       }
@@ -97,13 +103,20 @@ function cutoutSection(c, m) {
       toast(e.message, 'error');
     } finally {
       cutoutBusy.delete(m.id);
+      cutoutJobs.delete(m.id);
       bar.hidden = true;
+      stop.hidden = true;
       paint();
     }
   });
   paint();
   bar.hidden = !busy;
-  return sec('Background', btn, bar, status);
+  stop.hidden = !busy;
+  const edge = c.cutout ? [
+    slider('Edge softness', () => c.cutout_soft || 0, (v) => { c.cutout_soft = v; }, { min: 0, max: 1, step: 0.05, def: 0 }),
+    slider('Grow / shrink', () => c.cutout_grow || 0, (v) => { c.cutout_grow = v; }, { min: -1, max: 1, step: 0.05, def: 0 }),
+  ] : [];
+  return sec('Background', h('div', { class: 'row' }, btn, stop), bar, status, ...edge);
 }
 
 function render() {

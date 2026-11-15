@@ -94,7 +94,7 @@ jobs:
           $r = @()
           $r += "Engine tests on Windows: ${{ steps.tests.outcome }}"
           if (Test-Path test-output.txt) {
-            $r += (Select-String -Path test-output.txt -Pattern 'test result|FAILED|panicked|failed' | Select-Object -Last 30 | ForEach-Object { $_.Line })
+            $r += (Select-String -Path test-output.txt -Pattern 'test result|FAILED|panicked|failed' -Context 0,3 | Select-Object -Last 14 | ForEach-Object { $_.Line; $_.Context.PostContext | ForEach-Object { '    ' + $_.Substring(0, [Math]::Min(400, $_.Length)) } })
           }
           $r += "Background removal tests on Windows: ${{ steps.cutouttests.outcome }}"
           if (Test-Path cutout-output.txt) {

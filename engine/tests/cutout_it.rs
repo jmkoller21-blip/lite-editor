@@ -71,7 +71,7 @@ fn export_uses_the_matte_as_transparency() {
       "media":[{{"id":"m1","path":"{s}","kind":"video","dur":2000000,"w":640,"h":360,"has_audio":false}},
                {{"id":"m2","path":"{b}","kind":"video","dur":2000000,"w":640,"h":360,"has_audio":false}}],
       "tracks":[{{"id":"v1","kind":"video","clips":[{{"id":"c2","media":"m2","start":0,"dur":2000000}}]}},
-                {{"id":"v2","kind":"video","clips":[{{"id":"c1","media":"m1","start":0,"dur":2000000,"cutout":"{m}"}}]}}]}}"##,
+                {{"id":"v2","kind":"video","clips":[{{"id":"c1","media":"m1","start":0,"dur":2000000,"cutout":"{m}","cutout_soft":0.5,"cutout_grow":-0.5}}]}}]}}"##,
         s = f(&src), b = f(&blue), m = f(&mask));
     let p = Project::from_json(&Json::parse(&j).unwrap()).unwrap();
     let out = dir.join("out.mp4").to_string_lossy().to_string();

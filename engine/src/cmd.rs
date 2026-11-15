@@ -251,14 +251,19 @@ impl App {
         if out.exists() {
             return Ok(Json::obj(vec![("mask", Json::s(&outs)), ("ready", Json::Bool(true))]));
         }
+        if !crate::cutout::claim(&id) {
+            return Err("This video is already being processed".into());
+        }
         let proxy = a.str_or("proxy", "");
         let src = if !proxy.is_empty() && Path::new(&proxy).exists() { proxy } else { path };
         let dur_s = a.f64_or("dur", 10.0);
         let (job, prog, cancel) = self.add_job("cutout");
         let me = self.clone();
         let job2 = job.clone();
+        let id2 = id.clone();
         std::thread::spawn(move || {
             let r = crate::cutout::make_mask(&me.ff, &ai, &src, dur_s, &out, &prog, &cancel);
+            crate::cutout::release(&id2);
             me.finish_job(&job2, r.map(|_| Json::obj(vec![("mask", Json::s(&outs))])));
         });
         Ok(Json::obj(vec![("job", Json::s(&job))]))

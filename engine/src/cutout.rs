@@ -12,6 +12,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const MASK_FPS: f64 = 15.0;
 
+static RUNNING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Claim a media id; false if it is already being processed.
+pub fn claim(id: &str) -> bool {
+    let mut r = RUNNING.lock().unwrap();
+    if r.iter().any(|x| x == id) {
+        return false;
+    }
+    r.push(id.to_string());
+    true
+}
+
+pub fn release(id: &str) {
+    RUNNING.lock().unwrap().retain(|x| x != id);
+}
+
 pub fn lib_name() -> &'static str {
     if cfg!(windows) { "onnxruntime.dll" } else { "libonnxruntime.so" }
 }

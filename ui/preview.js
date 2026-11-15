@@ -269,10 +269,17 @@ function syncCutout(e, c, srcT, rate, playing, frozen, fs) {
   const cv = e.canvas;
   if (cv.width !== v.videoWidth || cv.height !== v.videoHeight) { cv.width = v.videoWidth; cv.height = v.videoHeight; }
   const mx = e.mcv.getContext('2d', { willReadFrequently: true });
+  const soft = c.cutout_soft || 0, grow = c.cutout_grow || 0;
+  mx.filter = soft > 0.01 ? `blur(${(soft * 5 + 0.1).toFixed(2)}px)` : 'none';
   mx.drawImage(m, 0, 0, 320, 320);
   const img = mx.getImageData(0, 0, 320, 320);
   const d = img.data;
-  for (let i = 0; i < d.length; i += 4) d[i + 3] = d[i];
+  if (Math.abs(grow) > 0.01) {
+    const off = grow * 50;
+    for (let i = 0; i < d.length; i += 4) { const v = (d[i] - 128 + off) * 3 + 128; d[i + 3] = v < 0 ? 0 : v > 255 ? 255 : v; }
+  } else {
+    for (let i = 0; i < d.length; i += 4) d[i + 3] = d[i];
+  }
   mx.putImageData(img, 0, 0);
   const g = cv.getContext('2d');
   g.globalCompositeOperation = 'source-over';
