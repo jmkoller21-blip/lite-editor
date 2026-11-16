@@ -267,6 +267,46 @@ fn keyframes_move_scale_rotate_and_fade() {
 }
 
 #[test]
+fn keyframe_easing_changes_the_motion() {
+    let ff = Ff::locate();
+    assert!(ff.available());
+    let dir = work();
+    let red = gen(&dir, "kfease.mp4", "color=c=red", 2, false);
+    let mk = |ease: &str| {
+        let kf = if ease.is_empty() {
+            r#"{"x":[[0,-200],[1,200]],"scale":[[0,0.3],[1,0.3]]}"#.to_string()
+        } else {
+            format!(r#"{{"x":[[0,-200,"{}"],[1,200]],"scale":[[0,0.3],[1,0.3]]}}"#, ease)
+        };
+        format!(r##"{{
+          "name":"k","width":640,"height":360,"fps":30,
+          "media":[{{"id":"m1","path":"{red}","kind":"video","dur":2000000,"w":640,"h":360,"has_audio":false}}],
+          "tracks":[{{"id":"v1","kind":"video","clips":[
+            {{"id":"c1","media":"m1","start":0,"dur":2000000,"in":0,"speed":1,"kf":{kf}}}]}}]}}"##, red = red, kf = kf)
+    };
+    // box is 192 px wide; at the middle of the clip a linear move has it centred (x = 0)
+    // hold: stays at the start (x = -200) until the next keyframe
+    let p = Project::from_json(&Json::parse(&mk("hold")).unwrap()).unwrap();
+    let out = run_export(&p, &dir, "ease_hold", false).unwrap_or_else(|e| panic!("hold export failed: {}", e));
+    let centre = pixel(&out, 1.0, 320, 180);
+    let left = pixel(&out, 1.0, 120, 180);
+    assert!(centre.0 < 60, "hold: the centre stays empty at 1 s, got {:?}", centre);
+    assert!(left.0 > 200 && left.1 < 60, "hold: the box is still at the left at 1 s, got {:?}", left);
+    // ease out: fast start, so at the middle it is already past the centre (x = 100)
+    let p = Project::from_json(&Json::parse(&mk("out")).unwrap()).unwrap();
+    let out = run_export(&p, &dir, "ease_out", false).unwrap_or_else(|e| panic!("ease-out export failed: {}", e));
+    let right = pixel(&out, 1.0, 480, 180);
+    let left = pixel(&out, 1.0, 120, 180);
+    assert!(right.0 > 200 && right.1 < 60, "ease out: the box is right of centre at 1 s, got {:?}", right);
+    assert!(left.0 < 60, "ease out: the left side is empty at 1 s, got {:?}", left);
+    // no easing: still centred at the middle (unchanged behaviour)
+    let p = Project::from_json(&Json::parse(&mk("")).unwrap()).unwrap();
+    let out = run_export(&p, &dir, "ease_lin", false).unwrap_or_else(|e| panic!("linear export failed: {}", e));
+    let centre = pixel(&out, 1.0, 320, 180);
+    assert!(centre.0 > 200 && centre.1 < 60, "linear: centred at 1 s, got {:?}", centre);
+}
+
+#[test]
 fn shape_masks_cut_the_clip() {
     let ff = Ff::locate();
     assert!(ff.available());

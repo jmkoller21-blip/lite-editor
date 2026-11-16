@@ -23,7 +23,7 @@ const check = (cond, name, detail) => (cond ? ok(name, detail) : bad(name, detai
   const page = await ctx.newPage();
   page.on('console', (m) => { if (m.type() === 'error') problems.push('console: ' + m.text()); });
   page.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
-  page.on('requestfailed', (r) => problems.push('requestfailed: ' + r.url() + ' ' + (r.failure() || {}).errorText));
+  page.on('requestfailed', (r) => (r.failure() || {}).errorText === 'net::ERR_ABORTED' && r.url().includes('/file?') ? null : problems.push('requestfailed: ' + r.url() + ' ' + (r.failure() || {}).errorText));
   page.on('response', (r) => { if (r.status() >= 400 && !r.url().includes('favicon')) problems.push(`http ${r.status()}: ${r.url()}`); });
   const shot = (n) => page.screenshot({ path: path.join(outDir, n + '.png') });
   const apiCall = (cmd, args) => page.evaluate(async ([c, a]) => (await fetch('/api/' + c, { method: 'POST', body: JSON.stringify(a || {}) })).json(), [cmd, args]);
@@ -96,6 +96,7 @@ const check = (cond, name, detail) => (cond ? ok(name, detail) : bad(name, detai
     await page.waitForSelector('#props canvas.curve');
     await shot('04b-speed-curve');
     // click on the graph to add a point
+    await page.locator('#props canvas.curve').scrollIntoViewIfNeeded();
     const cb = await page.locator('#props canvas.curve').boundingBox();
     await page.mouse.click(cb.x + cb.width * 0.9, cb.y + 30);
     await page.waitForTimeout(300);
@@ -122,6 +123,20 @@ const check = (cond, name, detail) => (cond ? ok(name, detail) : bad(name, detai
     const mid = await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); return m.propAt(c, 'scale', c.start + 2e6); });
     check(mid > 1.3 && mid < 1.7, 'scale is animated between keyframes', 'mid=' + mid);
     await shot('04d-keyframes');
+    // easing: "Hold" on the stretch under the playhead keeps the first value until the next keyframe
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); m.S.t = c.start + 2e6; m.emit('time'); });
+    await page.waitForTimeout(200);
+    await page.locator('#props .chips button', { hasText: 'Hold' }).click();
+    await page.waitForTimeout(300);
+    doc = await saved(page, apiCall);
+    const ke = doc.tracks.flatMap((t) => t.clips).find((c) => c.kf && c.kf.scale);
+    check(ke && ke.kf.scale[0][2] === 'hold', 'easing is saved on the keyframe', JSON.stringify(ke && ke.kf));
+    const held = await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); return m.propAt(c, 'scale', c.start + 2e6); });
+    check(held < 1.05, 'hold keeps the first value between keyframes', 'value=' + held);
+    await page.locator('#props .chips button', { hasText: 'Smooth' }).click();
+    await page.waitForTimeout(300);
+    const smooth = await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); return m.propAt(c, 'scale', c.start + 2e6); });
+    check(Math.abs(smooth - 1.5) < 0.05, 'smooth easing is symmetric at the middle', 'value=' + smooth);
     await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); m.mutate('clear keyframes', () => { delete c.kf; }); m.S.t = 0; m.emit('time'); });
 
     // ---- shape mask

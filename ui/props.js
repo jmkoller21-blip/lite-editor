@@ -1,7 +1,7 @@
 // Properties panel: edits the selected clip. Every change is one undoable step per drag.
 import {
   S, US, on, mutate, selected, media, clipKind, setSpeed, deleteClip, duration, clamp, defaultAdj, fmtDur,
-  propAt, kfTrack, hasKfAt, setPropAt, toggleKf,
+  propAt, kfTrack, hasKfAt, setPropAt, toggleKf, EASES, easeAt, setEaseAt,
 } from './state.js';
 import { h } from './ui.js';
 import { speedCurveSection } from './speedcurve.js';
@@ -70,6 +70,30 @@ function slider(label, get, set, { min, max, step, def, key, kf }) {
   syncs.push(sync);
   sync();
   return h('div', { class: 'prow' + (diamond ? ' kfrow' : '') }, h('label', { text: label }), range, num, ...(diamond ? [diamond] : []));
+}
+
+// How the animation moves between the two keyframes around the playhead (applies to every animated property).
+function easingRow() {
+  const clipNow = () => (S.doc && S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === S.sel)) || null;
+  const btns = EASES.map(([id, label]) => h('button', {
+    class: 'btn sm', type: 'button', text: label,
+    onclick: () => {
+      const c = clipNow();
+      if (!c) return;
+      mutate('Keyframe easing', () => setEaseAt(c, S.t, id), { source: 'prop' });
+      sync();
+    },
+  }));
+  const row = h('div', { class: 'chips', title: 'How the animation moves between the keyframes around the playhead' }, ...btns);
+  function sync() {
+    const c = clipNow();
+    const cur = c ? easeAt(c, S.t) : null;
+    row.style.opacity = cur === null ? '0.45' : '1';
+    btns.forEach((b, i) => { b.disabled = cur === null; b.classList.toggle('on', cur !== null && EASES[i][0] === cur); });
+  }
+  syncs.push(sync);
+  sync();
+  return h('div', { class: 'prow two' }, h('label', { text: 'Easing' }), row);
 }
 
 function check(label, get, set) {
@@ -181,6 +205,7 @@ function render() {
       slider('Scale', () => c.scale, (v) => { c.scale = v; }, { min: 0.1, max: 4, step: 0.01, def: 1, kf: 'scale' }),
       slider('Rotation', () => c.rot, (v) => { c.rot = v; }, { min: -180, max: 180, step: 1, def: 0, kf: 'rot' }),
       slider('Opacity', () => c.opacity, (v) => { c.opacity = v; }, { min: 0, max: 1, step: 0.01, def: 1, kf: 'opacity' }),
+      easingRow(),
       kind !== 'text' ? check('Mirror', () => c.mirror, (v) => { c.mirror = v; }) : null));
   }
 

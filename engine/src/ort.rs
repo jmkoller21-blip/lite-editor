@@ -234,7 +234,7 @@ impl Matter {
                 lo = lo.min(v);
                 hi = hi.max(v);
             }
-            let range = (hi - lo).max(1e-6);
+            let range = stretch_range(lo, hi);
             if self.prev.len() != n {
                 self.prev = vec![0.0; n];
                 for i in 0..n {
@@ -253,6 +253,33 @@ impl Matter {
             out[i] = (v * 255.0) as u8;
         }
         Ok(())
+    }
+}
+
+/// The model's output is already 0..1; each picture is stretched to use the full range, but never by
+/// more than 2.5x. Without that floor a frame with no subject in it (all values near 0) was stretched
+/// into random noise and the cut-out flickered in and out.
+pub fn stretch_range(lo: f32, hi: f32) -> f32 {
+    (hi - lo).max(0.4)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stretch_range;
+
+    #[test]
+    fn empty_frames_are_not_stretched_into_noise() {
+        // no subject: values between 0.00 and 0.04 must stay near zero after normalising
+        let r = stretch_range(0.0, 0.04);
+        assert!((0.04 - 0.0) / r < 0.15, "background noise was amplified to {}", 0.04 / r);
+    }
+
+    #[test]
+    fn a_clear_subject_is_unchanged() {
+        let r = stretch_range(0.0, 1.0);
+        assert!((r - 1.0).abs() < 1e-6);
+        // a weaker subject is still stretched towards full strength
+        assert!((0.8 / stretch_range(0.0, 0.8) - 1.0).abs() < 1e-6);
     }
 }
 

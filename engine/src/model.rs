@@ -170,17 +170,31 @@ impl Mask {
     }
 }
 
+/// One keyframe: position along the clip (0..1), value, and the easing of the stretch up to the
+/// next keyframe (0 linear, 1 smooth, 2 ease in, 3 ease out, 4 hold).
+pub type KfPt = (f64, f64, u8);
+
 #[derive(Clone, Debug, Default)]
 pub struct Kf {
-    pub x: Vec<(f64, f64)>,
-    pub y: Vec<(f64, f64)>,
-    pub scale: Vec<(f64, f64)>,
-    pub rot: Vec<(f64, f64)>,
-    pub opacity: Vec<(f64, f64)>,
+    pub x: Vec<KfPt>,
+    pub y: Vec<KfPt>,
+    pub scale: Vec<KfPt>,
+    pub rot: Vec<KfPt>,
+    pub opacity: Vec<KfPt>,
 }
 
-fn parse_kf_track(j: Option<&Json>) -> Vec<(f64, f64)> {
-    let mut v: Vec<(f64, f64)> = match j {
+pub fn parse_ease(s: &str) -> u8 {
+    match s {
+        "ease" => 1,
+        "in" => 2,
+        "out" => 3,
+        "hold" => 4,
+        _ => 0,
+    }
+}
+
+fn parse_kf_track(j: Option<&Json>) -> Vec<KfPt> {
+    let mut v: Vec<KfPt> = match j {
         Some(a) => a
             .as_arr()
             .iter()
@@ -189,7 +203,8 @@ fn parse_kf_track(j: Option<&Json>) -> Vec<(f64, f64)> {
                 if a.len() < 2 {
                     return None;
                 }
-                Some((a[0].as_f64()?.clamp(0.0, 1.0), a[1].as_f64()?))
+                let e = a.get(2).and_then(|x| x.as_str()).map(parse_ease).unwrap_or(0);
+                Some((a[0].as_f64()?.clamp(0.0, 1.0), a[1].as_f64()?, e))
             })
             .collect(),
         None => Vec::new(),

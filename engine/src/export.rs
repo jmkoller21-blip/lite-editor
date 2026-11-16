@@ -59,7 +59,7 @@ fn esc_path(p: &str) -> String {
 
 /// Piecewise-linear FFmpeg expression of a keyframe track. `tvar` is an expression for seconds
 /// since the start of the window; `skip_s` shifts it to seconds since the clip start.
-fn kf_expr(pts: &[(f64, f64)], clip_dur_s: f64, tvar: &str, skip_s: f64) -> String {
+fn kf_expr(pts: &[crate::model::KfPt], clip_dur_s: f64, tvar: &str, skip_s: f64) -> String {
     if pts.len() == 1 {
         return format!("({:.5})", pts[0].1);
     }
@@ -67,13 +67,21 @@ fn kf_expr(pts: &[(f64, f64)], clip_dur_s: f64, tvar: &str, skip_s: f64) -> Stri
     let last = pts[pts.len() - 1];
     let mut e = format!("{:.5}", last.1);
     for i in (0..pts.len() - 1).rev() {
-        let (u0, v0) = pts[i];
-        let (u1, v1) = pts[i + 1];
+        let (u0, v0, ease) = pts[i];
+        let (u1, v1, _) = pts[i + 1];
         let (t0, t1) = (u0 * clip_dur_s, u1 * clip_dur_s);
         let seg = if t1 - t0 < 1e-6 {
             format!("{:.5}", v1)
         } else {
-            format!("{:.5}+({:.5})*({}-{:.6})/{:.6}", v0, v1 - v0, tau, t0, t1 - t0)
+            let p = format!("(({}-{:.6})/{:.6})", tau, t0, t1 - t0);
+            let f = match ease {
+                1 => format!("{p}*{p}*(3-2*{p})", p = p),
+                2 => format!("{p}*{p}", p = p),
+                3 => format!("{p}*(2-{p})", p = p),
+                4 => "0".to_string(),
+                _ => p,
+            };
+            format!("{:.5}+({:.5})*({})", v0, v1 - v0, f)
         };
         e = format!("if(lt({},{:.6}),{},{})", tau, t1, seg, e);
     }

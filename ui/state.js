@@ -376,15 +376,53 @@ export function setCurve(c, tr, k) {
 // A property with keyframes follows them (linear between points); otherwise it is the plain c[prop].
 export const KF_PROPS = ['x', 'y', 'scale', 'rot', 'opacity'];
 export function kfTrack(c, p) { return c.kf && c.kf[p] && c.kf[p].length ? c.kf[p] : null; }
+// A point is [u, value] or [u, value, ease]; the ease shapes the stretch from that point to the next.
+export const EASES = [['', 'Linear'], ['ease', 'Smooth'], ['in', 'Ease in'], ['out', 'Ease out'], ['hold', 'Hold']];
+export function easeFn(e, p) {
+  switch (e) {
+    case 'ease': return p * p * (3 - 2 * p);
+    case 'in': return p * p;
+    case 'out': return p * (2 - p);
+    case 'hold': return 0;
+    default: return p;
+  }
+}
 export function kfValue(k, u) {
   if (u <= k[0][0]) return k[0][1];
   for (let i = 1; i < k.length; i++) {
     if (u <= k[i][0]) {
-      const [u0, v0] = k[i - 1], [u1, v1] = k[i];
-      return u1 === u0 ? v1 : v0 + (v1 - v0) * ((u - u0) / (u1 - u0));
+      const [u0, v0, e] = k[i - 1], [u1, v1] = k[i];
+      return u1 === u0 ? v1 : v0 + (v1 - v0) * easeFn(e, (u - u0) / (u1 - u0));
     }
   }
   return k[k.length - 1][1];
+}
+// index of the point that starts the stretch containing u (-1 before the first point or after the last)
+function segStart(k, u) {
+  for (let i = 0; i < k.length - 1; i++) if (u >= k[i][0] - 1e-9 && u < k[i + 1][0] - 1e-9) return i;
+  return -1;
+}
+// easing of the stretch under the playhead, taken from the first animated property
+export function easeAt(c, t) {
+  const u = clamp((t - c.start) / Math.max(1, c.dur), 0, 1);
+  for (const p of KF_PROPS) {
+    const k = kfTrack(c, p);
+    if (!k || k.length < 2) continue;
+    const i = segStart(k, u);
+    if (i >= 0) return k[i][2] || '';
+  }
+  return null; // no stretch to ease here
+}
+// set the easing of the stretch under the playhead for every animated property
+export function setEaseAt(c, t, e) {
+  const u = clamp((t - c.start) / Math.max(1, c.dur), 0, 1);
+  for (const p of KF_PROPS) {
+    const k = kfTrack(c, p);
+    if (!k || k.length < 2) continue;
+    const i = segStart(k, u);
+    if (i < 0) continue;
+    k[i] = e ? [k[i][0], k[i][1], e] : [k[i][0], k[i][1]];
+  }
 }
 export function propAt(c, p, t) {
   const k = kfTrack(c, p);
@@ -403,7 +441,12 @@ function putKf(c, p, u, v) {
   c.kf = c.kf || {};
   const k = c.kf[p] = c.kf[p] || [];
   const i = k.findIndex(([x]) => Math.abs(x - u) < KF_TOL);
-  if (i >= 0) k[i][1] = v; else { k.push([u, v]); k.sort((a, b) => a[0] - b[0]); }
+  if (i >= 0) { k[i][1] = v; return; }
+  // a new point splits a stretch: it keeps that stretch's easing
+  const s = k.length > 1 ? segStart(k, u) : -1;
+  const e = s >= 0 ? k[s][2] : '';
+  k.push(e ? [u, v, e] : [u, v]);
+  k.sort((a, b) => a[0] - b[0]);
 }
 // change a property at the playhead: edits or adds a keyframe when the property is animated
 export function setPropAt(c, p, t, v) {
@@ -427,8 +470,10 @@ export function cropKf(c, u0, u1) {
   for (const p of KF_PROPS) {
     const k = kfTrack(c, p);
     if (!k) continue;
-    const pts = [[0, kfValue(k, u0)]];
-    for (const [x, v] of k) if (x > u0 + 1e-6 && x < u1 - 1e-6) pts.push([(x - u0) / span, v]);
+    const s0 = segStart(k, u0);
+    const e0 = s0 >= 0 ? k[s0][2] : '';
+    const pts = [e0 ? [0, kfValue(k, u0), e0] : [0, kfValue(k, u0)]];
+    for (const [x, v, e] of k) if (x > u0 + 1e-6 && x < u1 - 1e-6) pts.push(e ? [(x - u0) / span, v, e] : [(x - u0) / span, v]);
     pts.push([1, kfValue(k, u1)]);
     out[p] = pts;
   }
