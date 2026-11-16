@@ -1,7 +1,7 @@
 // Properties panel: edits the selected clip. Every change is one undoable step per drag.
 import {
   S, US, on, mutate, selected, media, clipKind, setSpeed, deleteClip, duration, clamp, defaultAdj, fmtDur,
-  propAt, kfTrack, hasKfAt, setPropAt, toggleKf, EASES, easeAt, setEaseAt, detachAudio,
+  propAt, kfTrack, hasKfAt, setPropAt, toggleKf, EASES, easeAt, setEaseAt, detachAudio, freezeFrame,
 } from './state.js';
 import { h } from './ui.js';
 import { speedCurveSection } from './speedcurve.js';
@@ -209,10 +209,16 @@ function render() {
       kind !== 'text' ? check('Mirror', () => c.mirror, (v) => { c.mirror = v; }) : null));
   }
 
-  if (kind === 'video' || kind === 'audio') {
+  if (kind === 'video' && c.freeze) {
+    el.append(sec('Freeze frame', h('div', { class: 'hint', text: 'This clip holds one picture and has no sound. Drag its edge to make it longer or shorter.' })));
+  } else if (kind === 'video' || kind === 'audio') {
     el.append(sec('Speed',
       slider('Speed', () => c.speed, (v) => setSpeed(c, tr, v), { min: 0.25, max: 4, step: 0.05, def: 1 }),
-      h('div', { class: 'hint', text: 'Changing the speed changes how long the clip is.' })));
+      h('div', { class: 'hint', text: 'Changing the speed changes how long the clip is.' }),
+      ...(kind === 'video' ? [h('div', { class: 'prow two' }, h('span', {}), h('button', {
+        class: 'btn sm', type: 'button', text: 'Freeze frame (2 s)', title: 'Hold the picture at the playhead for 2 seconds',
+        onclick: () => { if (!freezeFrame(c.id, S.t)) toast('Move the playhead inside this clip first.'); },
+      }))] : [])));
     const curveBox = speedCurveSection(c, tr, () => { syncs.forEach((f) => f()); document.dispatchEvent(new Event('tlredraw')); });
     syncs.push(() => curveBox.redraw());
     el.append(sec('Speed curve', curveBox));

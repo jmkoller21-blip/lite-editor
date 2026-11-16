@@ -157,6 +157,25 @@ const check = (cond, name, detail) => (cond ? ok(name, detail) : bad(name, detai
     const afterUndo = await page.evaluate(async () => { const m = await import('/state.js'); return m.S.doc.tracks.reduce((n, t) => n + t.clips.length, 0); });
     check(afterUndo === beforeDetach, 'undo restores the clip count after detach', 'clips=' + afterUndo);
 
+    // ---- freeze frame: splits the clip at the playhead and slots in a 2 s still; undo restores
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.clips).find((x) => x.media && x.dur > 1.5e6); m.S.sel = c.id; m.S.t = c.start + c.dur / 2; m.emit('select'); m.emit('time'); });
+    await page.waitForTimeout(200);
+    const beforeFz = await page.evaluate(async () => { const m = await import('/state.js'); return { n: m.S.doc.tracks.reduce((n, t) => n + t.clips.length, 0), d: m.duration() }; });
+    await page.locator('#props button', { hasText: 'Freeze frame' }).click();
+    await page.waitForTimeout(300);
+    const fz = await page.evaluate(async () => {
+      const m = await import('/state.js');
+      const all = m.S.doc.tracks.flatMap((t) => t.clips);
+      const st = all.find((x) => x.freeze);
+      return { n: all.length, d: m.duration(), still: !!st, dur: st && st.dur, vol: st && st.volume, sel: st && m.S.sel === st.id };
+    });
+    check(fz.still && fz.dur === 2e6 && fz.vol === 0 && fz.sel && fz.n === beforeFz.n + 2 && Math.abs(fz.d - beforeFz.d - 2e6) < 1000, 'freeze frame adds a 2 s still and moves later clips', JSON.stringify(fz) + ' before ' + JSON.stringify(beforeFz));
+    await page.waitForSelector('#props .hint');
+    await page.evaluate(async () => { const m = await import('/state.js'); m.undo(); });
+    await page.waitForTimeout(200);
+    const afterFz = await page.evaluate(async () => { const m = await import('/state.js'); return { n: m.S.doc.tracks.reduce((n, t) => n + t.clips.length, 0), d: m.duration() }; });
+    check(afterFz.n === beforeFz.n && afterFz.d === beforeFz.d, 'undo restores the timeline after freeze frame', JSON.stringify(afterFz));
+
     // ---- shape mask
     await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.media && x.dur > 1.5e6); m.S.sel = c.id; m.S.t = c.start + 1e5; m.emit('select'); m.emit('time'); });
     await page.waitForTimeout(200);

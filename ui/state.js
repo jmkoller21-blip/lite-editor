@@ -336,6 +336,7 @@ export function curveIntegral(k, u) {
 }
 // source time (us) that is shown tlOff us into the clip
 export function srcOffset(c, tlOff) {
+  if (c.freeze) return 0;
   const k = curvePts(c);
   if (!k) return tlOff * c.speed;
   return c.dur * curveIntegral(k, clamp(tlOff / c.dur, 0, 1));
@@ -489,6 +490,62 @@ export function setSpeed(c, tr, speed) {
   if (c.start + dur > nextStart) dur = Math.max(MIN_DUR, nextStart - c.start);
   c.speed = speed;
   c.dur = dur;
+}
+
+// Freeze frame: at the playhead, hold the picture for `secs` seconds. The clip is split there, a still
+// clip of the frame is slotted in between, and everything after it on that track moves later.
+export function freezeFrame(clipId, t, secs = 2) {
+  const f = findClip(clipId);
+  if (!f) return false;
+  const { clip: c, track: tr } = f;
+  const m = media(c.media);
+  if (tr.locked || tr.kind !== 'video' || !m || m.kind !== 'video' || c.freeze) return false;
+  if (!(t > c.start + MIN_DUR / 2 && t < clipEnd(c) - MIN_DUR / 2)) return false;
+  const len = Math.round(secs * US);
+  mutate('Freeze frame', () => {
+    const right = JSON.parse(JSON.stringify(c));
+    right.id = uid();
+    const u = (t - c.start) / c.dur;
+    const srcAt = c.in + Math.round(srcOffset(c, t - c.start));
+    right.in = srcAt;
+    right.dur = clipEnd(c) - t;
+    if (c.curve) {
+      right.curve = cropCurve(c, u, 1);
+      const lc = cropCurve(c, 0, u);
+      right.speed = curveAvg(right.curve);
+      c.curve = lc;
+      c.speed = curveAvg(lc);
+    }
+    if (c.kf) {
+      const rk = cropKf(c, u, 1), lk = cropKf(c, 0, u);
+      if (rk) right.kf = rk; else delete right.kf;
+      if (lk) c.kf = lk; else delete c.kf;
+    }
+    right.transition_in = null;
+    right.fade_in = 0;
+    c.dur = t - c.start;
+    c.fade_out = 0;
+    const still = JSON.parse(JSON.stringify(c));
+    still.id = uid();
+    still.start = t;
+    still.dur = len;
+    still.in = srcAt;
+    still.speed = 1;
+    delete still.curve;
+    delete still.flatSpeed;
+    delete still.kf;
+    still.freeze = true;
+    still.volume = 0;
+    still.fade_in = 0;
+    still.fade_out = 0;
+    still.transition_in = null;
+    right.start = t + len;
+    for (const o of tr.clips) if (o.id !== c.id && o.start >= t - 1) o.start += len; // later clips make room
+    tr.clips.push(still, right);
+    tr.clips.sort((a, b) => a.start - b.start);
+    S.sel = still.id;
+  });
+  return true;
 }
 
 // Split the sound of a video clip onto its own audio track, at the same place and speed.

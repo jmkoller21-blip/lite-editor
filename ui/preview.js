@@ -221,9 +221,10 @@ function syncMedia(e, c, t, playing, frozen) {
   const el = e.el;
   const rate = clamp(c.curve ? curveSpeedAt(c, clamp((t - c.start) / c.dur, 0, 1)) : c.speed, 0.0625, 16);
   if (el.playbackRate !== rate) el.playbackRate = rate;
-  const srcT = frozen ? Math.max(0, (c.in + srcOffset(c, c.dur)) / US - 0.05) : Math.max(0, (c.in + srcOffset(c, t - c.start)) / US);
+  const hold = frozen || !!c.freeze;
+  const srcT = c.freeze ? c.in / US : frozen ? Math.max(0, (c.in + srcOffset(c, c.dur)) / US - 0.05) : Math.max(0, (c.in + srcOffset(c, t - c.start)) / US);
   const fs = frameUs() / US;
-  if (frozen || !playing) {
+  if (hold || !playing) {
     if (!el.paused) el.pause();
     if (el.readyState < 1) { e.pendingT = srcT; }
     else if (Math.abs(el.currentTime - srcT) > fs * 0.6 && Math.abs(e.lastSeek - srcT) > 0.001) { el.currentTime = srcT; e.lastSeek = srcT; }
@@ -233,7 +234,7 @@ function syncMedia(e, c, t, playing, frozen) {
   } else if (el.readyState >= 1 && Math.abs(el.currentTime - srcT) > 0.35) {
     el.currentTime = srcT;
   }
-  syncCutout(e, c, srcT, rate, playing, frozen, fs);
+  syncCutout(e, c, srcT, rate, playing, hold, fs);
   // volume with fades
   const fi = c.fade_in > 0 ? clamp((t - c.start) / c.fade_in, 0, 1) : 1;
   const fo = c.fade_out > 0 ? clamp((clipEnd(c) - t) / c.fade_out, 0, 1) : 1;

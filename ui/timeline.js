@@ -461,7 +461,7 @@ function dragMove(e) {
     const m = media(c.media);
     const { nextStart } = neighbours(f.track, c);
     let ne = snapOne(tOf(x), c.id);
-    const srcMax = m && m.kind !== 'image' && !c.text ? c.start + (m.dur - c.in) / c.speed : Infinity;
+    const srcMax = m && m.kind !== 'image' && !c.text && !c.freeze ? c.start + (m.dur - c.in) / c.speed : Infinity;
     ne = clamp(ne, c.start + MIN_DUR, Math.min(nextStart, srcMax));
     mutate('Trim end', () => { c.dur = Math.round(ne - c.start); });
   }

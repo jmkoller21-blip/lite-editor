@@ -269,9 +269,14 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                     // ---- video chain
                     if m.kind != MediaKind::Audio && !s.audio_only && !track.hidden {
                         let mut f = String::new();
-                        let retime = match curve_segs(c, &wn) {
-                            Some(segs) => format!("setpts=PTS-STARTPTS,{}", curve_setpts(&segs)),
-                            None => format!("setpts=(PTS-STARTPTS)/{:.6}", c.speed),
+                        let retime = if c.freeze {
+                            // one source frame, held for the whole clip
+                            format!("setpts=PTS-STARTPTS,trim=end_frame=1,tpad=stop_mode=clone:stop_duration={}", secs(wn.dur))
+                        } else {
+                            match curve_segs(c, &wn) {
+                                Some(segs) => format!("setpts=PTS-STARTPTS,{}", curve_setpts(&segs)),
+                                None => format!("setpts=(PTS-STARTPTS)/{:.6}", c.speed),
+                            }
                         };
                         let shape = if m.kind == MediaKind::Video || m.kind == MediaKind::Image { c.mask.as_ref() } else { None };
                         let shape_on = shape.is_some();
@@ -435,7 +440,7 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                     }
 
                     // ---- audio chain
-                    if m.has_audio && !track.muted && m.kind != MediaKind::Image && wn.dur > 0 {
+                    if m.has_audio && !track.muted && m.kind != MediaKind::Image && wn.dur > 0 && !c.freeze {
                         audio_chain(&mut g, idx, c, &wn, &mut audio_labels);
                     }
                 }

@@ -307,6 +307,43 @@ fn keyframe_easing_changes_the_motion() {
 }
 
 #[test]
+fn freeze_frame_holds_one_picture_without_sound() {
+    let ff = Ff::locate();
+    assert!(ff.available());
+    let dir = work();
+    // red for 2 s then blue for 2 s, with sound
+    let src = dir.join("fz.mp4").to_string_lossy().replace('\\', "/");
+    let st = ff.command("ffmpeg")
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=2", "-f", "lavfi", "-i", "color=c=blue:s=640x360:r=30:d=2",
+               "-f", "lavfi", "-i", "sine=frequency=440:d=4",
+               "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]", "-map", "2:a",
+               "-c:v", &vcodec(), "-pix_fmt", "yuv420p", "-c:a", "aac", &src])
+        .status().unwrap();
+    assert!(st.success());
+    // clip 0..1.5 s plays normally (red); the freeze holds the frame at source 1.9 s (red) for 2 s; then the rest
+    // of the source from 1.9 s (red for 0.1 s, then blue) follows
+    let j = format!(r##"{{
+      "name":"f","width":640,"height":360,"fps":30,
+      "media":[{{"id":"m1","path":"{src}","kind":"video","dur":4000000,"w":640,"h":360,"has_audio":true}}],
+      "tracks":[{{"id":"v1","kind":"video","clips":[
+        {{"id":"a","media":"m1","start":0,"dur":1900000,"in":0,"speed":1}},
+        {{"id":"f","media":"m1","start":1900000,"dur":2000000,"in":1900000,"speed":1,"freeze":true,"volume":0}},
+        {{"id":"b","media":"m1","start":3900000,"dur":2100000,"in":1900000,"speed":1}}]}}]}}"##, src = src);
+    let p = Project::from_json(&Json::parse(&j).unwrap()).unwrap();
+    let out = run_export(&p, &dir, "freeze", false).unwrap_or_else(|e| panic!("freeze export failed: {}", e));
+    let info = ff.probe(&out).unwrap();
+    assert!((info.dur as f64 / 1e6 - 6.0).abs() < 0.25, "duration {}", info.dur);
+    // during the freeze the picture stays red (the source turns blue at 2 s, which would show at 2.2 s if it kept playing)
+    let during = pixel(&out, 3.0, 5, 5);
+    assert!(during.0 > 200 && during.2 < 60, "frozen picture stays red at 3.0 s, got {:?}", during);
+    let late_freeze = pixel(&out, 3.8, 5, 5);
+    assert!(late_freeze.0 > 200 && late_freeze.2 < 60, "still red at 3.8 s, got {:?}", late_freeze);
+    // after the freeze the source continues: blue by 4.2 s
+    let after = pixel(&out, 4.5, 5, 5);
+    assert!(after.2 > 200 && after.0 < 60, "blue after the freeze, got {:?}", after);
+}
+
+#[test]
 fn shape_masks_cut_the_clip() {
     let ff = Ff::locate();
     assert!(ff.available());

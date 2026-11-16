@@ -102,6 +102,8 @@ pub struct Clip {
     pub rot: f64,
     pub opacity: f64,
     pub mirror: bool,
+    /// freeze frame: shows the single source frame at `src_in` for the whole clip, no sound
+    pub freeze: bool,
     pub volume: f64,
     pub fade_in: i64,
     pub fade_out: i64,
@@ -235,6 +237,9 @@ impl Clip {
 
     /// Source time (us) that has played `tl` us after the clip starts.
     pub fn src_off(&self, tl: i64) -> i64 {
+        if self.freeze {
+            return 0;
+        }
         match &self.curve {
             None => (tl as f64 * self.speed) as i64,
             Some(k) => {
@@ -403,6 +408,7 @@ impl Project {
                     rot: c.f64_or("rot", 0.0),
                     opacity: c.f64_or("opacity", 1.0).clamp(0.0, 1.0),
                     mirror: c.bool_or("mirror", false),
+                    freeze: c.bool_or("freeze", false),
                     volume: c.f64_or("volume", 1.0).clamp(0.0, 4.0),
                     fade_in: c.i64_or("fade_in", 0).max(0),
                     fade_out: c.i64_or("fade_out", 0).max(0),
