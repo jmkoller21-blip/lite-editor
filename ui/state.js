@@ -491,6 +491,34 @@ export function setSpeed(c, tr, speed) {
   c.dur = dur;
 }
 
+// Split the sound of a video clip onto its own audio track, at the same place and speed.
+// The video clip is silenced. Returns the new audio clip, or null if there is nothing to detach.
+export function detachAudio(clipId) {
+  const f = findClip(clipId);
+  if (!f) return null;
+  const { clip: c, track: tr } = f;
+  const m = media(c.media);
+  if (tr.kind !== 'video' || !m || !m.has_audio) return null;
+  const a = {
+    id: uid(), media: c.media, start: c.start, dur: c.dur, in: c.in, speed: c.speed, x: 0, y: 0, scale: 1, rot: 0, opacity: 1,
+    mirror: false, volume: c.volume, fade_in: c.fade_in || 0, fade_out: c.fade_out || 0, adj: defaultAdj(),
+  };
+  if (c.curve) { a.curve = c.curve.map((p) => p.slice()); if (c.flatSpeed) a.flatSpeed = c.flatSpeed; }
+  mutate('Detach audio', () => {
+    let at = S.doc.tracks.find((t) => t.kind === 'audio' && !t.locked && !overlaps(t, a.start, a.dur));
+    if (!at) {
+      at = { id: 't-' + uid(), kind: 'audio', muted: false, hidden: false, locked: false, clips: [] };
+      S.doc.tracks.unshift(at);
+    }
+    addClipToTrack(at, a);
+    c.volume = 0;
+    c.fade_in = 0;
+    c.fade_out = 0;
+    S.sel = a.id;
+  });
+  return a;
+}
+
 export function addTrack(kind) {
   const id = 't-' + uid();
   const tr = { id, kind, muted: false, hidden: false, locked: false, clips: [] };

@@ -139,6 +139,24 @@ const check = (cond, name, detail) => (cond ? ok(name, detail) : bad(name, detai
     check(Math.abs(smooth - 1.5) < 0.05, 'smooth easing is symmetric at the middle', 'value=' + smooth);
     await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); m.mutate('clear keyframes', () => { delete c.kf; }); m.S.t = 0; m.emit('time'); });
 
+    // ---- detach audio: the sound moves to its own audio track, the video clip goes silent; undo restores
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.clips).find((x) => x.media && m.media(x.media).has_audio && x.dur > 1.5e6); m.S.sel = c.id; m.S.t = c.start + 1e5; m.emit('select'); m.emit('time'); });
+    await page.waitForTimeout(200);
+    const beforeDetach = await page.evaluate(async () => { const m = await import('/state.js'); return m.S.doc.tracks.reduce((n, t) => n + t.clips.length, 0); });
+    await page.locator('#props button', { hasText: 'Detach audio' }).click();
+    await page.waitForTimeout(300);
+    const dt = await page.evaluate(async () => {
+      const m = await import('/state.js');
+      const au = m.S.doc.tracks.filter((t) => t.kind === 'audio').flatMap((t) => t.clips).find((x) => x.id === m.S.sel);
+      const vid = au && m.S.doc.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.clips).find((x) => x.media === au.media && x.start === au.start);
+      return { au: !!au, same: !!vid && vid.dur === au.dur && vid.in === au.in, vol: vid ? vid.volume : null, n: m.S.doc.tracks.reduce((n, t) => n + t.clips.length, 0) };
+    });
+    check(dt.au && dt.same && dt.vol === 0 && dt.n === beforeDetach + 1, 'detach audio makes an audio clip and silences the video', JSON.stringify(dt));
+    await page.evaluate(async () => { const m = await import('/state.js'); m.undo(); });
+    await page.waitForTimeout(200);
+    const afterUndo = await page.evaluate(async () => { const m = await import('/state.js'); return m.S.doc.tracks.reduce((n, t) => n + t.clips.length, 0); });
+    check(afterUndo === beforeDetach, 'undo restores the clip count after detach', 'clips=' + afterUndo);
+
     // ---- shape mask
     await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.media && x.dur > 1.5e6); m.S.sel = c.id; m.S.t = c.start + 1e5; m.emit('select'); m.emit('time'); });
     await page.waitForTimeout(200);

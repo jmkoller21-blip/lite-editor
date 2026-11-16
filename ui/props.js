@@ -1,7 +1,7 @@
 // Properties panel: edits the selected clip. Every change is one undoable step per drag.
 import {
   S, US, on, mutate, selected, media, clipKind, setSpeed, deleteClip, duration, clamp, defaultAdj, fmtDur,
-  propAt, kfTrack, hasKfAt, setPropAt, toggleKf, EASES, easeAt, setEaseAt,
+  propAt, kfTrack, hasKfAt, setPropAt, toggleKf, EASES, easeAt, setEaseAt, detachAudio,
 } from './state.js';
 import { h } from './ui.js';
 import { speedCurveSection } from './speedcurve.js';
@@ -240,7 +240,11 @@ function render() {
     el.append(sec('Audio',
       slider('Volume', () => c.volume, (v) => { c.volume = v; }, { min: 0, max: 2, step: 0.01, def: 1 }),
       slider('Fade in', () => c.fade_in / US, (v) => { c.fade_in = Math.round(v * US); }, { min: 0, max: maxFade, step: 0.1, def: 0 }),
-      slider('Fade out', () => c.fade_out / US, (v) => { c.fade_out = Math.round(v * US); }, { min: 0, max: maxFade, step: 0.1, def: 0 })));
+      slider('Fade out', () => c.fade_out / US, (v) => { c.fade_out = Math.round(v * US); }, { min: 0, max: maxFade, step: 0.1, def: 0 }),
+      ...(kind === 'video' ? [h('div', { class: 'prow two' }, h('span', {}), h('button', {
+        class: 'btn sm', type: 'button', text: 'Detach audio', title: 'Move this clip\'s sound to its own audio track',
+        onclick: () => { if (!detachAudio(c.id)) toast('This clip has no sound to detach.'); },
+      }))] : [])));
   }
 
   if (kind === 'video' || kind === 'image') {
