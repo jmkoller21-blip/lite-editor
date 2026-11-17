@@ -179,6 +179,7 @@ impl App {
             }
             "media_import" => self.media_import(a),
             "media_check" => Ok(self.media_check(a)),
+            "media_proxy" => self.media_proxy(a),
             "cutout_start" => self.cutout_start(a),
             "job_status" => Ok(self.job_json(&a.str_or("id", ""))),
             "job_cancel" => {
@@ -313,7 +314,7 @@ impl App {
             let has_thumb = media::make_thumb(&self.ff, &self.store, &id, &path, &info);
             let mut extra: Vec<(String, Json)> = vec![("thumb".into(), Json::Bool(has_thumb))];
             if media::needs_proxy(&info, &path, ph) {
-                let job = self.start_proxy(&id, &path, info.clone(), ph);
+                let job = self.start_proxy(&id, &path, info.clone(), ph, false);
                 extra.push(("proxy_job".into(), Json::s(&job)));
                 extra.push(("proxy".into(), Json::s("")));
             } else {
@@ -327,29 +328,61 @@ impl App {
         Ok(Json::obj(vec![("items", Json::Arr(out))]))
     }
 
-    fn start_proxy(self: &Arc<App>, id: &str, path: &str, info: crate::ff::MediaInfo, ph: u32) -> String {
+    /// `force`: the preview could not play the original, so make a copy even if the file looked fine,
+    /// throw away any earlier copy, and fall back to VP8 when the H.264 encoder fails.
+    fn start_proxy(self: &Arc<App>, id: &str, path: &str, info: crate::ff::MediaInfo, ph: u32, force: bool) -> String {
         let (job, _prog, cancel) = self.add_job("proxy");
         let me = self.clone();
         let (id, path, job2) = (id.to_string(), path.to_string(), job.clone());
         std::thread::spawn(move || {
-            let enc = if info.kind == MediaKind::Video {
+            // encoders to try, best first (prefer a software or hardware H.264 encoder; VP8 always plays in the browser engine)
+            let mut encs: Vec<String> = Vec::new();
+            if info.kind == MediaKind::Video {
                 let usable = me.ff.usable_h264_encoders();
-                // prefer a software or hardware H.264 encoder; fall back to VP8 (always playable in the browser engine)
-                usable.iter().find(|e| *e != "mpeg4" && *e != "libvpx").or_else(|| usable.iter().find(|e| *e == "libvpx")).cloned().unwrap_or_else(|| "libvpx".to_string())
-            } else {
-                String::new()
-            };
-            let r = media::make_proxy(&me.ff, &me.store, &id, &path, &info, &enc, ph, &cancel);
-            match r {
-                Ok(p) => {
-                    let ps = p.to_string_lossy().to_string();
-                    me.allow(&ps);
-                    me.finish_job(&job2, Ok(Json::obj(vec![("proxy", Json::s(&ps))])));
+                if let Some(e) = usable.iter().find(|e| *e != "mpeg4" && *e != "libvpx") {
+                    encs.push(e.clone());
                 }
-                Err(e) => me.finish_job(&job2, Err(e)),
+                encs.push("libvpx".to_string());
+            } else {
+                encs.push(String::new());
             }
+            let mut last = String::from("no encoder available");
+            for enc in encs {
+                if force {
+                    let (old, _) = media::proxy_target(&me.store, &id, &info, &enc, ph);
+                    let _ = std::fs::remove_file(old);
+                }
+                match media::make_proxy(&me.ff, &me.store, &id, &path, &info, &enc, ph, &cancel) {
+                    Ok(p) => {
+                        let ps = p.to_string_lossy().to_string();
+                        me.allow(&ps);
+                        me.finish_job(&job2, Ok(Json::obj(vec![("proxy", Json::s(&ps))])));
+                        return;
+                    }
+                    Err(e) => {
+                        last = e;
+                        if cancel.load(Ordering::Relaxed) {
+                            break;
+                        }
+                    }
+                }
+            }
+            me.finish_job(&job2, Err(last));
         });
         job
+    }
+
+    /// The preview could not play this file: make a preview copy of it now.
+    fn media_proxy(self: &Arc<App>, a: &Json) -> Result<Json, String> {
+        let path = a.str_or("path", "");
+        if !Path::new(&path).is_file() {
+            return Err("the file does not exist".into());
+        }
+        let info = self.ff.probe(&path)?;
+        self.allow(&path);
+        let id = a.str_or("id", &media::media_id(&path));
+        let job = self.start_proxy(&id, &path, info, self.proxy_height(), true);
+        Ok(Json::obj(vec![("job", Json::s(&job))]))
     }
 
     /// For each media item of a loaded project: is the file still there, and does it have a usable proxy?
@@ -369,7 +402,7 @@ impl App {
                         if !existing.is_empty() && Path::new(&existing).is_file() {
                             self.allow(&existing);
                         } else {
-                            let job = self.start_proxy(&id, &path, info, ph);
+                            let job = self.start_proxy(&id, &path, info, ph, false);
                             item.push(("proxy_job".into(), Json::s(&job)));
                         }
                     }

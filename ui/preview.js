@@ -3,6 +3,7 @@
 // scaled and moved around the frame centre. Media elements exist only near the playhead.
 import { maskUrl } from './maskshape.js';
 import { fileUrl } from './api.js';
+import { repairPreview } from './library.js';
 import {
   S, US, media, clipEnd, selected, findClip, clamp, mutate, beginGesture, endGesture, on, emit,
   duration, clipKind, frameUs, curveSpeedAt, srcOffset, propAt, kfTrack,
@@ -127,6 +128,9 @@ function ensure(c, tr, ti) {
     }
     e.failed = true;
     updateMessage();
+    // no preview copy exists or is on its way: have the engine make one, then the preview switches to it
+    const m = media(e.clip.media);
+    if (m && !m.proxy_job) repairPreview(m).then((started) => { if (started) updateMessage(); });
   };
   const onLoaded = () => { e.retried = false; if (e.failed) { e.failed = false; updateMessage(); } };
   if (e.el && (kind === 'video' || kind === 'audio')) {
