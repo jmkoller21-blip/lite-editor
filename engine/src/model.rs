@@ -145,13 +145,23 @@ impl Mask {
 
     /// FFmpeg `geq` expression (0..255) for this mask. X, Y, W, H are the frame's own variables.
     pub fn geq_expr(&self) -> String {
+        self.geq_expr_with(None, None, None, None)
+    }
+
+    /// Same, but x, y, w and h may be FFmpeg expressions (of `T`) instead of the stored numbers,
+    /// for an animated mask.
+    pub fn geq_expr_with(&self, x: Option<String>, y: Option<String>, w: Option<String>, h: Option<String>) -> String {
         let a = self.rot.to_radians();
         let (c, s) = (a.cos(), a.sin());
         let f = self.feather.max(0.002);
-        // st(0)=dx st(1)=dy st(2)=px st(3)=py
+        let xe = x.unwrap_or_else(|| format!("{:.5}", self.x.clamp(-1.0, 1.0)));
+        let ye = y.unwrap_or_else(|| format!("{:.5}", self.y.clamp(-1.0, 1.0)));
+        let we = w.unwrap_or_else(|| format!("{:.5}", self.w));
+        let he = h.unwrap_or_else(|| format!("{:.5}", self.h));
+        // st(0)=dx st(1)=dy st(2)=px st(3)=py (geq has only ten slots, 0..9, and the heart uses 4..6)
         let mut e = format!(
-            "st(0,X-{:.5}*W);st(1,Y-{:.5}*H);st(2,(ld(0)*{c:.6}+ld(1)*{s:.6})/({w:.5}*W/2));st(3,(-ld(0)*{s:.6}+ld(1)*{c:.6})/({h:.5}*H/2));",
-            0.5 + self.x, 0.5 + self.y, c = c, s = s, w = self.w, h = self.h
+            "st(0,X-(0.5+({xe}))*W);st(1,Y-(0.5+({ye}))*H);st(2,(ld(0)*{c:.6}+ld(1)*{s:.6})/(max(0.02,{we})*W/2));st(3,(-ld(0)*{s:.6}+ld(1)*{c:.6})/(max(0.02,{he})*H/2));",
+            xe = xe, ye = ye, we = we, he = he, c = c, s = s
         );
         let alpha = match self.shape.as_str() {
             "ellipse" => format!("clip((1-hypot(ld(2),ld(3)))/{:.5},0,1)", f),
@@ -183,6 +193,13 @@ pub struct Kf {
     pub scale: Vec<KfPt>,
     pub rot: Vec<KfPt>,
     pub opacity: Vec<KfPt>,
+    pub volume: Vec<KfPt>,
+    pub brightness: Vec<KfPt>,
+    pub saturation: Vec<KfPt>,
+    pub mask_x: Vec<KfPt>,
+    pub mask_y: Vec<KfPt>,
+    pub mask_w: Vec<KfPt>,
+    pub mask_h: Vec<KfPt>,
 }
 
 pub fn parse_ease(s: &str) -> u8 {
@@ -224,6 +241,13 @@ impl Kf {
                 scale: parse_kf_track(k.get("scale")),
                 rot: parse_kf_track(k.get("rot")),
                 opacity: parse_kf_track(k.get("opacity")),
+                volume: parse_kf_track(k.get("volume")),
+                brightness: parse_kf_track(k.get("brightness")),
+                saturation: parse_kf_track(k.get("saturation")),
+                mask_x: parse_kf_track(k.get("mask_x")),
+                mask_y: parse_kf_track(k.get("mask_y")),
+                mask_w: parse_kf_track(k.get("mask_w")),
+                mask_h: parse_kf_track(k.get("mask_h")),
             },
             None => Kf::default(),
         }

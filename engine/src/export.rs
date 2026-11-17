@@ -306,10 +306,17 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                                 alpha_labels.push(format!("cs{}", idx));
                             }
                             if let Some(sm) = shape {
+                                // an animated mask works its position and size out per frame from the keyframes
+                                let (cd, sk) = (c.dur as f64 / 1e6, wn.skip as f64 / 1e6);
+                                let ke = |p: &Vec<crate::model::KfPt>| if p.is_empty() { None } else { Some(kf_expr(p, cd, "T", sk)) };
+                                let animated = !(c.kf.mask_x.is_empty() && c.kf.mask_y.is_empty() && c.kf.mask_w.is_empty() && c.kf.mask_h.is_empty());
+                                // the shape is evaluated per pixel; a smaller picture keeps the animated case fast
+                                let size = if animated { "320x180" } else { "640x360" };
+                                let e = sm.geq_expr_with(ke(&c.kf.mask_x), ke(&c.kf.mask_y), ke(&c.kf.mask_w), ke(&c.kf.mask_h));
                                 let _ = write!(
                                     g,
-                                    "color=c=black:s=640x360:r={fps:.4}:d={d:.3},format=gray,geq=lum='{e}'[sh{i}];\n[sh{i}][{cur}]scale2ref=flags=bilinear[ss{i}][cq{i}];\n",
-                                    fps = fps, d = wn.dur as f64 / 1e6 + 0.5, e = sm.geq_expr(), i = idx, cur = cur_v
+                                    "color=c=black:s={size}:r={fps:.4}:d={d:.3},format=gray,geq=lum='{e}'[sh{i}];\n[sh{i}][{cur}]scale2ref=flags=bilinear[ss{i}][cq{i}];\n",
+                                    size = size, fps = fps, d = wn.dur as f64 / 1e6 + 0.5, e = e, i = idx, cur = cur_v
                                 );
                                 cur_v = format!("cq{}", idx);
                                 alpha_labels.push(format!("ss{}", idx));
@@ -358,8 +365,20 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                             f.push_str("hflip,");
                         }
                         let a = &c.adj;
-                        if !a.is_identity() {
-                            if (a.brightness).abs() > 0.001 || (a.contrast - 1.0).abs() > 0.001 || (a.saturation - 1.0).abs() > 0.001 {
+                        let (kf_bright, kf_sat) = (!c.kf.brightness.is_empty(), !c.kf.saturation.is_empty());
+                        if !a.is_identity() || kf_bright || kf_sat {
+                            if kf_bright || kf_sat {
+                                // animated brightness / saturation: `hue` re-reads its expressions every frame.
+                                // Its brightness unit is about 29.4 levels (of 255), so 1.0 of ours is 8.67 of its.
+                                let (cd, sk) = (c.dur as f64 / 1e6, wn.skip as f64 / 1e6);
+                                let be = if kf_bright { format!("clip(({})*8.67,-10,10)", kf_expr(&c.kf.brightness, cd, "t", sk)) } else { format!("{:.4}", (a.brightness * 8.67).clamp(-10.0, 10.0)) };
+                                let se = if kf_sat { format!("clip({},-10,10)", kf_expr(&c.kf.saturation, cd, "t", sk)) } else { format!("{:.4}", a.saturation) };
+                                let _ = write!(f, "format={},", yuv_fmt);
+                                if (a.contrast - 1.0).abs() > 0.001 {
+                                    let _ = write!(f, "lutyuv=y='clip((val-128)*{:.4}+128,0,255)',", a.contrast);
+                                }
+                                let _ = write!(f, "hue=b='{}':s='{}',", be, se);
+                            } else if (a.brightness).abs() > 0.001 || (a.contrast - 1.0).abs() > 0.001 || (a.saturation - 1.0).abs() > 0.001 {
                                 // the LGPL FFmpeg build has no `eq`; lutyuv + hue give the same result
                                 let _ = write!(
                                     f,
@@ -570,7 +589,11 @@ fn audio_chain(g: &mut String, idx: usize, c: &Clip, wn: &Win, labels: &mut Vec<
     } else {
         let _ = write!(f, "[{}:a]asetpts=PTS-STARTPTS,{},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,", idx, tempo_chain(c.speed));
     }
-    if (c.volume - 1.0).abs() > 0.001 {
+    if !c.kf.volume.is_empty() {
+        // animated volume: re-evaluated every frame, on the clip's own timeline
+        let ex = kf_expr(&c.kf.volume, c.dur as f64 / 1e6, "t", wn.skip as f64 / 1e6);
+        let _ = write!(f, "volume=volume='max(0,{})':eval=frame:precision=float,", ex);
+    } else if (c.volume - 1.0).abs() > 0.001 {
         let _ = write!(f, "volume={:.4},", c.volume);
     }
     let fi = (c.fade_in as f64 / 1e6).min(dur_s);

@@ -376,3 +376,63 @@ fn shape_masks_cut_the_clip() {
         run_export(&p, &dir, "mask3", false).unwrap_or_else(|e| panic!("{} mask export failed: {}", shape, e));
     }
 }
+
+/// Mean volume (dB) of `t` seconds of `file` starting at `ss`, read with ffmpeg's volumedetect.
+fn mean_volume(file: &str, ss: f64, t: f64) -> f64 {
+    let out = Ff::locate().command("ffmpeg")
+        .args(["-v", "info", "-ss", &format!("{}", ss), "-t", &format!("{}", t), "-i", file, "-af", "volumedetect", "-f", "null", "-"])
+        .output().unwrap();
+    let text = String::from_utf8_lossy(&out.stderr).to_string();
+    let at = text.find("mean_volume:").unwrap_or_else(|| panic!("no mean_volume in: {}", text));
+    text[at + 12..].trim_start().split_whitespace().next().unwrap().parse().unwrap()
+}
+
+fn one_clip_project(media_path: &str, has_audio: bool, clip_extra: &str) -> Project {
+    let j = format!(r##"{{
+      "name":"k","width":640,"height":360,"fps":30,
+      "media":[{{"id":"m1","path":"{p}","kind":"video","dur":2000000,"w":640,"h":360,"has_audio":{a}}}],
+      "tracks":[{{"id":"v1","kind":"video","clips":[
+        {{"id":"c1","media":"m1","start":0,"dur":2000000,"in":0,"speed":1,{x}}}]}}]}}"##, p = media_path, a = has_audio, x = clip_extra);
+    Project::from_json(&Json::parse(&j).unwrap()).unwrap()
+}
+
+#[test]
+fn keyframes_for_volume_colour_and_mask() {
+    let ff = Ff::locate();
+    assert!(ff.available());
+    let dir = work();
+
+    // saturation: red fades to grey
+    let red = gen(&dir, "kfsat.mp4", "color=c=red", 2, false);
+    let p = one_clip_project(&red, false, r#""kf":{"saturation":[[0,1],[1,0]]}"#);
+    let out = run_export(&p, &dir, "kf_sat", false).unwrap_or_else(|e| panic!("saturation keyframe export failed: {}", e));
+    let early = pixel(&out, 0.1, 320, 180);
+    let late = pixel(&out, 1.9, 320, 180);
+    assert!(early.0 > 180 && early.1 < 90, "saturation: still red at the start, got {:?}", early);
+    assert!((late.0 as i32 - late.1 as i32).abs() < 40, "saturation: nearly grey at the end, got {:?}", late);
+
+    // brightness: grey gets darker at the start than at the end
+    let grey = gen(&dir, "kfbri.mp4", "color=c=gray", 2, false);
+    let p = one_clip_project(&grey, false, r#""kf":{"brightness":[[0,-0.5],[1,0.5]]}"#);
+    let out = run_export(&p, &dir, "kf_bri", false).unwrap_or_else(|e| panic!("brightness keyframe export failed: {}", e));
+    let early = pixel(&out, 0.1, 320, 180);
+    let late = pixel(&out, 1.9, 320, 180);
+    assert!(late.0 as i32 - early.0 as i32 > 60, "brightness: much brighter at the end, got {:?} then {:?}", early, late);
+
+    // volume: silent at the start, full at the end
+    let tone = gen(&dir, "kfvol.mp4", "color=c=black", 2, true);
+    let p = one_clip_project(&tone, true, r#""kf":{"volume":[[0,0],[1,1]]}"#);
+    let out = run_export(&p, &dir, "kf_vol", true).unwrap_or_else(|e| panic!("volume keyframe export failed: {}", e));
+    let quiet = mean_volume(&out, 0.0, 0.3);
+    let loud = mean_volume(&out, 1.6, 0.3);
+    assert!(loud - quiet > 12.0, "volume: much louder at the end, got {} dB then {} dB", quiet, loud);
+
+    // mask: a narrow window slides from the left edge to the right edge
+    let red2 = gen(&dir, "kfmask.mp4", "color=c=red", 2, false);
+    let p = one_clip_project(&red2, false, r#""mask":{"shape":"rect","x":0,"y":0,"w":0.3,"h":1.5,"feather":0.02},"kf":{"mask_x":[[0,-0.4],[1,0.4]]}"#);
+    let out = run_export(&p, &dir, "kf_mask", false).unwrap_or_else(|e| panic!("mask keyframe export failed: {}", e));
+    let (l0, r0) = (pixel(&out, 0.1, 80, 180), pixel(&out, 0.1, 560, 180));
+    let (l1, r1) = (pixel(&out, 1.9, 80, 180), pixel(&out, 1.9, 560, 180));
+    assert!(l0.0 > 180 && r0.0 < 60, "mask: window on the left at the start, got {:?} / {:?}", l0, r0);
+    assert!(r1.0 > 180 && l1.0 < 60, "mask: window on the right at the end, got {:?} / {:?}", l1, r1);
+}
