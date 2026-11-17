@@ -1,7 +1,7 @@
 // Properties panel: edits the selected clip. Every change is one undoable step per drag.
 import {
   S, US, on, mutate, selected, media, clipKind, setSpeed, deleteClip, duration, clamp, defaultAdj, fmtDur,
-  propAt, kfTrack, hasKfAt, setPropAt, toggleKf, EASES, easeAt, setEaseAt, detachAudio, freezeFrame,
+  propAt, kfTrack, hasKfAt, setPropAt, toggleKf, dropKf, EASES, easeAt, setEaseAt, detachAudio, freezeFrame,
 } from './state.js';
 import { h } from './ui.js';
 import { speedCurveSection } from './speedcurve.js';
@@ -228,12 +228,12 @@ function render() {
     const mk = c.mask && c.mask.shape ? c.mask : null;
     const chips = h('div', { class: 'chips' }, ...MASK_SHAPES.map((sh) => h('button', {
       class: 'btn sm' + ((mk ? mk.shape : '') === sh.id ? ' on' : ''), type: 'button', text: sh.label,
-      onclick: () => mutate('Mask: ' + sh.label, () => { if (!sh.id) delete c.mask; else c.mask = mk && mk.shape ? Object.assign({}, mk, { shape: sh.id }) : defaultMask(sh.id); }),
+      onclick: () => mutate('Mask: ' + sh.label, () => { if (!sh.id) { delete c.mask; dropKf(c, ['mask_x', 'mask_y', 'mask_w', 'mask_h']); } else c.mask = mk && mk.shape ? Object.assign({}, mk, { shape: sh.id }) : defaultMask(sh.id); }),
     })));
-    const ms = (label, key, min, max, step, def) => slider(label, () => (c.mask ? c.mask[key] : def), (v) => { if (c.mask) c.mask[key] = v; }, { min, max, step, def, key: 'mask-' + key });
+    const ms = (label, key, min, max, step, def, kf) => slider(label, () => (c.mask ? c.mask[key] : def), (v) => { if (c.mask) c.mask[key] = v; }, { min, max, step, def, key: 'mask-' + key, kf });
     el.append(sec('Mask', chips, ...(mk ? [
-      ms('X', 'x', -1, 1, 0.01, 0), ms('Y', 'y', -1, 1, 0.01, 0),
-      ms('Width', 'w', 0.05, 3, 0.01, 0.6), ms('Height', 'h', 0.05, 3, 0.01, 0.6),
+      ms('X', 'x', -1, 1, 0.01, 0, 'mask_x'), ms('Y', 'y', -1, 1, 0.01, 0, 'mask_y'),
+      ms('Width', 'w', 0.05, 3, 0.01, 0.6, 'mask_w'), ms('Height', 'h', 0.05, 3, 0.01, 0.6, 'mask_h'),
       ms('Rotation', 'rot', -180, 180, 1, 0), ms('Feather', 'feather', 0, 1, 0.01, 0.1),
       check('Invert', () => c.mask && c.mask.invert, (v) => { if (c.mask) c.mask.invert = v; }),
     ] : [])));
@@ -244,7 +244,7 @@ function render() {
   if (kind === 'audio' || (kind === 'video' && m && m.has_audio)) {
     const maxFade = Math.max(0.1, Math.min(5, c.dur / US / 2));
     el.append(sec('Audio',
-      slider('Volume', () => c.volume, (v) => { c.volume = v; }, { min: 0, max: 2, step: 0.01, def: 1 }),
+      slider('Volume', () => c.volume, (v) => { c.volume = v; }, { min: 0, max: 2, step: 0.01, def: 1, kf: 'volume' }),
       slider('Fade in', () => c.fade_in / US, (v) => { c.fade_in = Math.round(v * US); }, { min: 0, max: maxFade, step: 0.1, def: 0 }),
       slider('Fade out', () => c.fade_out / US, (v) => { c.fade_out = Math.round(v * US); }, { min: 0, max: maxFade, step: 0.1, def: 0 }),
       ...(kind === 'video' ? [h('div', { class: 'prow two' }, h('span', {}), h('button', {
@@ -255,11 +255,11 @@ function render() {
 
   if (kind === 'video' || kind === 'image') {
     const adj = () => (c.adj ||= defaultAdj());
-    const reset = h('button', { class: 'btn sm', text: 'Reset colour', onclick: () => { mutate('Reset colour', () => { c.adj = defaultAdj(); }); } });
+    const reset = h('button', { class: 'btn sm', text: 'Reset colour', onclick: () => { mutate('Reset colour', () => { c.adj = defaultAdj(); dropKf(c, ['brightness', 'saturation']); }); } });
     el.append(sec('Colour',
-      slider('Brightness', () => adj().brightness, (v) => { adj().brightness = v; }, { min: -1, max: 1, step: 0.01, def: 0 }),
+      slider('Brightness', () => adj().brightness, (v) => { adj().brightness = v; }, { min: -1, max: 1, step: 0.01, def: 0, kf: 'brightness' }),
       slider('Contrast', () => adj().contrast, (v) => { adj().contrast = v; }, { min: 0, max: 2, step: 0.01, def: 1 }),
-      slider('Saturation', () => adj().saturation, (v) => { adj().saturation = v; }, { min: 0, max: 3, step: 0.01, def: 1 }),
+      slider('Saturation', () => adj().saturation, (v) => { adj().saturation = v; }, { min: 0, max: 3, step: 0.01, def: 1, kf: 'saturation' }),
       slider('Hue', () => adj().hue, (v) => { adj().hue = v; }, { min: -180, max: 180, step: 1, def: 0 }),
       slider('Warmth', () => adj().warmth, (v) => { adj().warmth = v; }, { min: -1, max: 1, step: 0.01, def: 0 }),
       slider('Blur', () => adj().blur, (v) => { adj().blur = v; }, { min: 0, max: 40, step: 0.5, def: 0 }),

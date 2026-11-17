@@ -55,7 +55,7 @@ export function maskUrl(m) {
   }
   g.putImageData(img, 0, 0);
   const url = `url(${cv.toDataURL('image/png')})`;
-  if (cache.size > 60) cache.clear();
+  if (cache.size > 240) cache.clear();
   cache.set(key, url);
   return url;
 }

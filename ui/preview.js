@@ -5,7 +5,7 @@ import { maskUrl } from './maskshape.js';
 import { fileUrl } from './api.js';
 import {
   S, US, media, clipEnd, selected, findClip, clamp, mutate, beginGesture, endGesture, on, emit,
-  duration, clipKind, frameUs, curveSpeedAt, srcOffset, propAt,
+  duration, clipKind, frameUs, curveSpeedAt, srcOffset, propAt, kfTrack,
 } from './state.js';
 
 const stage = document.getElementById('stage');
@@ -148,6 +148,20 @@ function cssFilter(a, k) {
   return f.join(' ');
 }
 
+// the clip's colour settings with any brightness / saturation keyframes applied at time t
+function adjAt(c, t) {
+  if (!c.adj || !(kfTrack(c, 'brightness') || kfTrack(c, 'saturation'))) return c.adj;
+  return Object.assign({}, c.adj, { brightness: propAt(c, 'brightness', t), saturation: propAt(c, 'saturation', t) });
+}
+// the clip's mask with any position / size keyframes applied at time t. Animated values are rounded
+// to 0.02 so the preview only has to draw a few dozen different mask pictures along a move.
+function maskAt(c, t) {
+  const m = c.mask;
+  if (!m || !m.shape || !['mask_x', 'mask_y', 'mask_w', 'mask_h'].some((p) => kfTrack(c, p))) return m;
+  const q = (v) => Math.round(v / 0.02) * 0.02;
+  return Object.assign({}, m, { x: q(propAt(c, 'mask_x', t)), y: q(propAt(c, 'mask_y', t)), w: q(propAt(c, 'mask_w', t)), h: q(propAt(c, 'mask_h', t)) });
+}
+
 function applyVisual(e, c, t, frozen) {
   let x = propAt(c, 'x', t) * K, y = propAt(c, 'y', t) * K, sc = propAt(c, 'scale', t), op = propAt(c, 'opacity', t);
   const rot = propAt(c, 'rot', t);
@@ -176,12 +190,15 @@ function applyVisual(e, c, t, frozen) {
     const fw = mw * fit, fh = mh * fit;
     const lw = e.layer.clientWidth || S.doc.width * K, lh = e.layer.clientHeight || S.doc.height * K;
     const st = e.layer.style;
-    st.webkitMaskImage = st.maskImage = maskUrl(c.mask);
+    const mk = maskAt(c, t);
+    const mkey = [mk.shape, mk.x, mk.y, mk.w, mk.h, mk.rot, mk.feather, mk.invert].join('|');
+    if (e.maskKey !== mkey) { e.maskKey = mkey; st.webkitMaskImage = st.maskImage = maskUrl(mk); }
     st.webkitMaskSize = st.maskSize = `${fw}px ${fh}px`;
     st.webkitMaskPosition = st.maskPosition = `${(lw - fw) / 2}px ${(lh - fh) / 2}px`;
     st.webkitMaskRepeat = st.maskRepeat = 'no-repeat';
   } else if (e.layer.style.maskImage || e.layer.style.webkitMaskImage) {
     e.layer.style.webkitMaskImage = e.layer.style.maskImage = '';
+    e.maskKey = null;
   }
   e.layer.style.display = e.track.hidden ? 'none' : '';
   if (e.kind === 'text') {
@@ -202,7 +219,7 @@ function applyVisual(e, c, t, frozen) {
     s.style.background = tx.boxed ? 'rgba(0,0,0,.55)' : 'none';
     s.style.padding = tx.boxed ? `${px / 4}px` : '0';
   } else {
-    e.el.style.filter = cssFilter(c.adj, K);
+    e.el.style.filter = cssFilter(adjAt(c, t), K);
     if (e.canvas) e.canvas.style.filter = e.el.style.filter;
   }
 }
@@ -238,7 +255,7 @@ function syncMedia(e, c, t, playing, frozen) {
   // volume with fades
   const fi = c.fade_in > 0 ? clamp((t - c.start) / c.fade_in, 0, 1) : 1;
   const fo = c.fade_out > 0 ? clamp((clipEnd(c) - t) / c.fade_out, 0, 1) : 1;
-  el.volume = clamp(c.volume * Math.min(fi, fo), 0, 1);
+  el.volume = clamp(propAt(c, 'volume', t) * Math.min(fi, fo), 0, 1);
   el.muted = !!e.track.muted || frozen || !m.has_audio;
 }
 

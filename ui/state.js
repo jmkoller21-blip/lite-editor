@@ -373,9 +373,24 @@ export function setCurve(c, tr, k) {
 }
 
 // ---- keyframes ---------------------------------------------------------
-// c.kf = { x:[[u,v],...], y, scale, rot, opacity }: u is the position along the clip (0..1).
-// A property with keyframes follows them (linear between points); otherwise it is the plain c[prop].
-export const KF_PROPS = ['x', 'y', 'scale', 'rot', 'opacity'];
+// c.kf = { x:[[u,v],...], y, scale, rot, opacity, volume, brightness, saturation, mask_x, mask_y, mask_w, mask_h }:
+// u is the position along the clip (0..1). A property with keyframes follows them (linear between points,
+// or eased); otherwise it is the plain value, which lives on the clip, in c.adj (brightness, saturation)
+// or in c.mask (mask_x, mask_y, mask_w, mask_h).
+export const KF_PROPS = ['x', 'y', 'scale', 'rot', 'opacity', 'volume', 'brightness', 'saturation', 'mask_x', 'mask_y', 'mask_w', 'mask_h'];
+const ADJ_KF = ['brightness', 'saturation'];
+const MASK_DEF = { x: 0, y: 0, w: 0.6, h: 0.6 };
+// the plain (un-animated) value of a keyframable property
+export function baseVal(c, p) {
+  if (ADJ_KF.includes(p)) return c.adj ? c.adj[p] : defaultAdj()[p];
+  if (p.startsWith('mask_')) return c.mask && c.mask[p.slice(5)] !== undefined ? c.mask[p.slice(5)] : MASK_DEF[p.slice(5)];
+  return c[p];
+}
+function setBase(c, p, v) {
+  if (ADJ_KF.includes(p)) (c.adj ||= defaultAdj())[p] = v;
+  else if (p.startsWith('mask_')) { if (c.mask) c.mask[p.slice(5)] = v; }
+  else c[p] = v;
+}
 export function kfTrack(c, p) { return c.kf && c.kf[p] && c.kf[p].length ? c.kf[p] : null; }
 // A point is [u, value] or [u, value, ease]; the ease shapes the stretch from that point to the next.
 export const EASES = [['', 'Linear'], ['ease', 'Smooth'], ['in', 'Ease in'], ['out', 'Ease out'], ['hold', 'Hold']];
@@ -427,7 +442,7 @@ export function setEaseAt(c, t, e) {
 }
 export function propAt(c, p, t) {
   const k = kfTrack(c, p);
-  return k ? kfValue(k, clamp((t - c.start) / Math.max(1, c.dur), 0, 1)) : c[p];
+  return k ? kfValue(k, clamp((t - c.start) / Math.max(1, c.dur), 0, 1)) : baseVal(c, p);
 }
 const KF_TOL = 0.004; // keyframes closer than this (fraction of the clip) count as the same one
 export function kfIndexAt(c, p, t) {
@@ -452,7 +467,7 @@ function putKf(c, p, u, v) {
 // change a property at the playhead: edits or adds a keyframe when the property is animated
 export function setPropAt(c, p, t, v) {
   if (kfTrack(c, p)) putKf(c, p, clamp((t - c.start) / Math.max(1, c.dur), 0, 1), v);
-  else c[p] = v;
+  else setBase(c, p, v);
 }
 // the diamond button: add a keyframe here with the current value, or remove the one here
 export function toggleKf(c, p, t) {
@@ -460,9 +475,15 @@ export function toggleKf(c, p, t) {
   const i = kfIndexAt(c, p, t);
   if (i < 0) { putKf(c, p, u, propAt(c, p, t)); return; }
   const k = c.kf[p];
-  if (k.length === 1) c[p] = k[0][1];
+  if (k.length === 1) setBase(c, p, k[0][1]);
   k.splice(i, 1);
   if (!k.length) delete c.kf[p];
+  if (!Object.keys(c.kf).length) delete c.kf;
+}
+// remove the keyframes of some properties (their plain value stays as it is)
+export function dropKf(c, props) {
+  if (!c.kf) return;
+  for (const p of props) delete c.kf[p];
   if (!Object.keys(c.kf).length) delete c.kf;
 }
 export function cropKf(c, u0, u1) {
@@ -561,6 +582,8 @@ export function detachAudio(clipId) {
     mirror: false, volume: c.volume, fade_in: c.fade_in || 0, fade_out: c.fade_out || 0, adj: defaultAdj(),
   };
   if (c.curve) { a.curve = c.curve.map((p) => p.slice()); if (c.flatSpeed) a.flatSpeed = c.flatSpeed; }
+  const vk = kfTrack(c, 'volume');
+  if (vk) a.kf = { volume: vk.map((p) => p.slice()) };
   mutate('Detach audio', () => {
     let at = S.doc.tracks.find((t) => t.kind === 'audio' && !t.locked && !overlaps(t, a.start, a.dur));
     if (!at) {
@@ -569,6 +592,7 @@ export function detachAudio(clipId) {
     }
     addClipToTrack(at, a);
     c.volume = 0;
+    if (c.kf) { delete c.kf.volume; if (!Object.keys(c.kf).length) delete c.kf; }
     c.fade_in = 0;
     c.fade_out = 0;
     S.sel = a.id;

@@ -139,6 +139,27 @@ const check = (cond, name, detail) => (cond ? ok(name, detail) : bad(name, detai
     check(Math.abs(smooth - 1.5) < 0.05, 'smooth easing is symmetric at the middle', 'value=' + smooth);
     await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); m.mutate('clear keyframes', () => { delete c.kf; }); m.S.t = 0; m.emit('time'); });
 
+    // ---- keyframes for brightness, volume and a mask size (same clip, playhead at 1 s then 3 s)
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.media && x.dur > 3.5e6 && m.media(x.media).has_audio); m.mutate('mask for test', () => { c.mask = { shape: 'ellipse', x: 0, y: 0, w: 0.6, h: 0.6, rot: 0, feather: 0.1, invert: false }; }); m.S.sel = c.id; m.S.t = c.start + 1e6; m.emit('select'); m.emit('time'); });
+    await page.waitForTimeout(300);
+    for (const lab of ['Brightness', 'Volume', 'Width']) await page.locator(`#props button[aria-label="${lab} keyframe"]`).click();
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); m.S.t = c.start + 3e6; m.emit('time'); });
+    await page.waitForTimeout(200);
+    for (const [lab, v] of [['Brightness', '0.5'], ['Volume', '0'], ['Width', '1.5']]) {
+      await page.fill(`#props input[aria-label="${lab} value"]`, v);
+      await page.press(`#props input[aria-label="${lab} value"]`, 'Enter');
+      await page.waitForTimeout(150);
+    }
+    doc = await saved(page, apiCall);
+    const kk = doc.tracks.flatMap((t) => t.clips).find((c) => c.kf && c.kf.volume);
+    check(kk && kk.kf.brightness && kk.kf.brightness.length === 2 && kk.kf.volume.length === 2 && kk.kf.mask_w && kk.kf.mask_w.length === 2, 'brightness, volume and mask width keyframes are saved', JSON.stringify(kk && kk.kf));
+    const kv = await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); const t = c.start + 2e6; return { b: m.propAt(c, 'brightness', t), v: m.propAt(c, 'volume', t), w: m.propAt(c, 'mask_w', t), plainB: c.adj.brightness, plainW: c.mask.w }; });
+    check(Math.abs(kv.b - 0.25) < 0.02 && Math.abs(kv.v - 0.5) < 0.02 && Math.abs(kv.w - 1.05) < 0.03, 'brightness, volume and mask width animate between keyframes', JSON.stringify(kv));
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); m.S.t = c.start + 2e6; m.emit('time'); });
+    await page.waitForTimeout(300);
+    check(await page.evaluate(() => document.querySelectorAll('.stage-layer, #stage *').length > 0), 'preview still renders with animated colour, volume and mask');
+    await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.flatMap((t) => t.clips).find((x) => x.id === m.S.sel); m.mutate('clear test keyframes', () => { delete c.kf; delete c.mask; c.adj.brightness = 0; c.volume = 1; }); m.S.t = 0; m.emit('time'); });
+
     // ---- detach audio: the sound moves to its own audio track, the video clip goes silent; undo restores
     await page.evaluate(async () => { const m = await import('/state.js'); const c = m.S.doc.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.clips).find((x) => x.media && m.media(x.media).has_audio && x.dur > 1.5e6); m.S.sel = c.id; m.S.t = c.start + 1e5; m.emit('select'); m.emit('time'); });
     await page.waitForTimeout(200);
