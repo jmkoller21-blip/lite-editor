@@ -109,11 +109,33 @@ function ensure(c, tr, ti) {
     }
     stage.insertBefore(layer, selbox);
   }
+  // A file that fails to load is tried once more (a busy moment, a dropped connection, a copy that was still
+  // being written) before the clip is marked as unplayable; the message clears as soon as it does load.
+  const onError = () => {
+    if (entries.get(e.id) !== e || !e.src) return; // a dropped clip, or the source was just cleared
+    const err = e.el.error;
+    e.errCode = err ? err.code : 0;
+    if (!e.retried) {
+      e.retried = true;
+      setTimeout(() => {
+        if (entries.get(e.id) !== e || !e.el || !e.src) return;
+        e.pendingT = kind === 'image' ? 0 : (e.el.currentTime || e.pendingT || 0);
+        e.el.src = e.src;
+        if (e.el.load) e.el.load();
+      }, 500);
+      return;
+    }
+    e.failed = true;
+    updateMessage();
+  };
+  const onLoaded = () => { e.retried = false; if (e.failed) { e.failed = false; updateMessage(); } };
   if (e.el && (kind === 'video' || kind === 'audio')) {
     e.el.addEventListener('loadedmetadata', () => { if (e.pendingT > 0) e.el.currentTime = e.pendingT; });
-    e.el.addEventListener('error', () => { e.failed = true; updateMessage(); });
+    e.el.addEventListener('loadeddata', onLoaded);
+    e.el.addEventListener('error', onError);
   } else if (e.el && kind === 'image') {
-    e.el.addEventListener('error', () => { e.failed = true; updateMessage(); });
+    e.el.addEventListener('load', onLoaded);
+    e.el.addEventListener('error', onError);
   }
   entries.set(c.id, e);
   return e;
@@ -231,6 +253,7 @@ function syncMedia(e, c, t, playing, frozen) {
   if (e.src !== want) {
     e.src = want;
     e.failed = false;
+    e.retried = false;
     e.el.src = want;
     e.lastSeek = -1;
   }
@@ -328,9 +351,14 @@ function syncCutout(e, c, srcT, rate, playing, frozen, fs) {
 function updateMessage() {
   const bad = [...entries.values()].filter((e) => e.failed && e.layer && e.layer.style.display !== 'none');
   if (!bad.length) { msg.hidden = true; return; }
-  const m = media(bad[0].clip.media);
+  const b = bad[0];
+  const m = media(b.clip.media);
   msg.hidden = false;
-  msg.textContent = m && m.proxy_job ? 'Preparing a smooth preview…' : 'This file cannot be previewed here. Export will still include it.';
+  if (m && m.proxy_job) { msg.textContent = 'Preparing a smooth preview…'; return; }
+  // the browser engine's own reason, so a report says what actually went wrong
+  const why = { 2: 'the file could not be read', 3: 'the picture could not be decoded', 4: 'this format is not supported' }[b.errCode] || 'it could not be opened';
+  const where = b.clip && S.doc ? ` at ${Math.floor(S.t / US / 60)}:${String(Math.floor(S.t / US) % 60).padStart(2, '0')}` : '';
+  msg.textContent = `${m && m.name ? m.name : 'This file'} cannot be previewed${where} (${why}). Export will still include it.`;
 }
 
 export function render(force) {
@@ -358,7 +386,7 @@ export function render(force) {
     const e = ensure(c, tr, ti);
     if (e.layer) e.layer.style.display = 'none';
     const m = media(c.media);
-    if (m && e.src !== srcFor(m)) { e.src = srcFor(m); e.el.src = e.src; e.pendingT = c.in / US; e.failed = false; }
+    if (m && e.src !== srcFor(m)) { e.src = srcFor(m); e.el.src = e.src; e.pendingT = c.in / US; e.failed = false; e.retried = false; }
     if (e.el && !e.el.paused) e.el.pause();
   }
   for (const e of [...entries.values()]) if (!keep.has(e.id)) drop(e);
