@@ -123,3 +123,84 @@ jobs:
           prerelease: true
           body_path: ci-report.txt
           files: src-tauri/target/release/bundle/nsis/*.exe
+
+  # Linux installer (.deb and AppImage) for the same build number. Runs after the Windows job
+  # so it can attach its files to the release that job created.
+  linux:
+    needs: windows
+    if: ${{ always() }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf file
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Fetch FFmpeg (LGPL build) and background-removal runtime and model
+        run: |
+          mkdir -p ffmpeg ai ff-tmp ort-tmp
+          curl -L -o ff-tmp/ff.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-lgpl.tar.xz
+          tar -xJf ff-tmp/ff.tar.xz -C ff-tmp
+          cp ff-tmp/*/bin/ffmpeg ff-tmp/*/bin/ffprobe ffmpeg/
+          cp ff-tmp/*/LICENSE.txt ffmpeg/ 2>/dev/null || true
+          curl -L -o ort-tmp/ort.tgz https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-linux-x64-1.20.1.tgz
+          tar -xzf ort-tmp/ort.tgz -C ort-tmp
+          cp ort-tmp/onnxruntime-linux-x64-1.20.1/lib/libonnxruntime.so.1.20.1 ai/libonnxruntime.so
+          cp ort-tmp/onnxruntime-linux-x64-1.20.1/LICENSE ai/ONNXRUNTIME-LICENSE.txt
+          curl -L -o ai/u2netp.onnx https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx
+          ffmpeg/ffmpeg -hide_banner -encoders | grep -E "libx264|libvpx|aac" || true
+          ls -la ffmpeg ai
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            engine
+            src-tauri
+
+      - name: Engine tests (Linux)
+        id: tests
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          LITE_FFMPEG_DIR: ${{ github.workspace }}/ffmpeg
+          LITE_AI_DIR: ${{ github.workspace }}/ai
+        run: cargo test --manifest-path engine/Cargo.toml --lib --test export_it --test server_it > test-output.txt 2>&1
+
+      - name: Build Linux installers
+        run: npx --yes @tauri-apps/cli@2 build --bundles deb appimage
+
+      - name: Show installers
+        run: ls -la src-tauri/target/release/bundle/deb src-tauri/target/release/bundle/appimage
+
+      - name: Write Linux report
+        run: |
+          {
+            echo "Linux build ${{ github.run_number }} (commit ${{ github.sha }})"
+            echo "Engine tests on Linux: ${{ steps.tests.outcome }}"
+            grep -E 'test result|FAILED|panicked' test-output.txt | tail -20 || true
+          } > linux-report.txt
+          cat linux-report.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lite-editor-linux-installers
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Lite Editor build ${{ github.run_number }}
+          prerelease: true
+          files: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
