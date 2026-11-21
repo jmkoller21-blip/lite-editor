@@ -36,13 +36,12 @@ jobs:
       - name: Fetch background-removal runtime and model
         shell: pwsh
         run: |
-          $v = "1.20.1"
-          Invoke-WebRequest -Uri "https://github.com/microsoft/onnxruntime/releases/download/v$v/onnxruntime-win-x64-$v.zip" -OutFile ort.zip
-          Expand-Archive ort.zip -DestinationPath ortx
-          $root = Get-ChildItem ortx -Directory | Select-Object -First 1
+          # ONNX Runtime 1.20.1 comes from the PyPI wheel (same binaries as the GitHub release).
+          python -m pip download onnxruntime==1.20.1 --no-deps --only-binary=:all: --platform win_amd64 --python-version 3.12 -d ortw
+          Expand-Archive (Get-ChildItem ortw -Filter *.whl | Select-Object -First 1).FullName -DestinationPath ortx
           New-Item -ItemType Directory -Force ai | Out-Null
-          Copy-Item "$($root.FullName)\lib\onnxruntime.dll" ai\
-          Copy-Item "$($root.FullName)\LICENSE" ai\ONNXRUNTIME-LICENSE.txt
+          Copy-Item "ortx\onnxruntime\capi\onnxruntime.dll" ai\
+          Get-ChildItem ortx\*.dist-info | Select-Object -First 1 | ForEach-Object { Copy-Item (Join-Path $_.FullName 'LICENSE') ai\ONNXRUNTIME-LICENSE.txt -ErrorAction SilentlyContinue }
           Invoke-WebRequest -Uri "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx" -OutFile ai\u2netp.onnx
           foreach ($d in "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll") { Copy-Item "$env:SystemRoot\System32\$d" ai\ }
           Get-ChildItem ai | Format-Table Name, Length
@@ -144,15 +143,15 @@ jobs:
 
       - name: Fetch FFmpeg (LGPL build) and background-removal runtime and model
         run: |
-          mkdir -p ffmpeg ai ff-tmp ort-tmp
+          mkdir -p ffmpeg ai ff-tmp
           curl -L -o ff-tmp/ff.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-lgpl.tar.xz
           tar -xJf ff-tmp/ff.tar.xz -C ff-tmp
           cp ff-tmp/*/bin/ffmpeg ff-tmp/*/bin/ffprobe ffmpeg/
           cp ff-tmp/*/LICENSE.txt ffmpeg/ 2>/dev/null || true
-          curl -L -o ort-tmp/ort.tgz https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-linux-x64-1.20.1.tgz
-          tar -xzf ort-tmp/ort.tgz -C ort-tmp
-          cp ort-tmp/onnxruntime-linux-x64-1.20.1/lib/libonnxruntime.so.1.20.1 ai/libonnxruntime.so
-          cp ort-tmp/onnxruntime-linux-x64-1.20.1/LICENSE ai/ONNXRUNTIME-LICENSE.txt
+          # ONNX Runtime 1.20.1 from the PyPI wheel (same binaries as the GitHub release).
+          python3 -m pip download onnxruntime==1.20.1 --no-deps --only-binary=:all: --platform manylinux_2_28_x86_64 --python-version 3.12 -d ort-whl
+          unzip -j -o ort-whl/onnxruntime-*.whl 'onnxruntime/capi/libonnxruntime.so.1.20.1' -d ai
+          mv ai/libonnxruntime.so.1.20.1 ai/libonnxruntime.so
           curl -L -o ai/u2netp.onnx https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx
           ffmpeg/ffmpeg -hide_banner -encoders | grep -E "libx264|libvpx|aac" || true
           ls -la ffmpeg ai
