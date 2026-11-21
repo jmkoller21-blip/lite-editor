@@ -38,7 +38,8 @@ jobs:
         run: |
           # ONNX Runtime 1.20.1 comes from the PyPI wheel (same binaries as the GitHub release).
           python -m pip download onnxruntime==1.20.1 --no-deps --only-binary=:all: --platform win_amd64 --python-version 3.12 -d ortw
-          Expand-Archive (Get-ChildItem ortw -Filter *.whl | Select-Object -First 1).FullName -DestinationPath ortx
+          Copy-Item (Get-ChildItem ortw -Filter *.whl | Select-Object -First 1).FullName ort.zip
+          Expand-Archive ort.zip -DestinationPath ortx
           New-Item -ItemType Directory -Force ai | Out-Null
           Copy-Item "ortx\onnxruntime\capi\onnxruntime.dll" ai\
           Get-ChildItem ortx\*.dist-info | Select-Object -First 1 | ForEach-Object { Copy-Item (Join-Path $_.FullName 'LICENSE') ai\ONNXRUNTIME-LICENSE.txt -ErrorAction SilentlyContinue }
