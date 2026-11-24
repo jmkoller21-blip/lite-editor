@@ -240,7 +240,7 @@ export function splitAt(t) {
         c.speed = curveAvg(lc);
       }
       if (c.kf) {
-        const rk = cropKf(c, u, 1), lk = cropKf(c, 0, u);
+        const rk = cropKf(c, t, clipEnd(c)), lk = cropKf(c, c.start, t);
         if (rk) right.kf = rk; else delete right.kf;
         if (lk) c.kf = lk; else delete c.kf;
       }
@@ -265,14 +265,14 @@ export function trimSide(side, t) {
       const u = (t - c.start) / c.dur;
       c.in += Math.round(srcOffset(c, t - c.start));
       if (c.curve) { c.curve = cropCurve(c, u, 1); c.speed = curveAvg(c.curve); }
-      if (c.kf) { const k = cropKf(c, u, 1); if (k) c.kf = k; else delete c.kf; }
+      if (c.kf) { const k = cropKf(c, t, clipEnd(c)); if (k) c.kf = k; else delete c.kf; }
       c.dur = clipEnd(c) - t;
       c.start = t;
       c.fade_in = 0;
       c.transition_in = null;
     } else {
       if (c.curve) { c.curve = cropCurve(c, 0, (t - c.start) / c.dur); c.speed = curveAvg(c.curve); }
-      if (c.kf) { const k = cropKf(c, 0, (t - c.start) / c.dur); if (k) c.kf = k; else delete c.kf; }
+      if (c.kf) { const k = cropKf(c, c.start, t); if (k) c.kf = k; else delete c.kf; }
       c.dur = t - c.start;
       c.fade_out = 0;
     }
@@ -373,10 +373,11 @@ export function setCurve(c, tr, k) {
 }
 
 // ---- keyframes ---------------------------------------------------------
-// c.kf = { x:[[u,v],...], y, scale, rot, opacity, volume, brightness, saturation, mask_x, mask_y, mask_w, mask_h }:
-// u is the position along the clip (0..1). A property with keyframes follows them (linear between points,
-// or eased); otherwise it is the plain value, which lives on the clip, in c.adj (brightness, saturation)
-// or in c.mask (mask_x, mask_y, mask_w, mask_h).
+// c.kf = { x:[[t,v],...], y, scale, rot, opacity, volume, brightness, saturation, mask_x, mask_y, mask_w, mask_h }:
+// t is the absolute time (microseconds) measured from the clip's own start. A property with keyframes
+// follows them (linear between points, or eased); otherwise it is the plain value, which lives on the
+// clip, in c.adj (brightness, saturation) or in c.mask (mask_x, mask_y, mask_w, mask_h). Keyframes live
+// at fixed points on the timeline — the same basis CapCut uses.
 export const KF_PROPS = ['x', 'y', 'scale', 'rot', 'opacity', 'volume', 'brightness', 'saturation', 'mask_x', 'mask_y', 'mask_w', 'mask_h'];
 const ADJ_KF = ['brightness', 'saturation'];
 const MASK_DEF = { x: 0, y: 0, w: 0.6, h: 0.6 };
@@ -392,7 +393,8 @@ function setBase(c, p, v) {
   else c[p] = v;
 }
 export function kfTrack(c, p) { return c.kf && c.kf[p] && c.kf[p].length ? c.kf[p] : null; }
-// A point is [u, value] or [u, value, ease]; the ease shapes the stretch from that point to the next.
+// A point is [t, value] or [t, value, ease]; t is absolute microseconds from the clip start.
+// The ease shapes the stretch from that point to the next.
 export const EASES = [['', 'Linear'], ['ease', 'Smooth'], ['in', 'Ease in'], ['out', 'Ease out'], ['hold', 'Hold']];
 export function easeFn(e, p) {
   switch (e) {
@@ -403,77 +405,77 @@ export function easeFn(e, p) {
     default: return p;
   }
 }
-export function kfValue(k, u) {
-  if (u <= k[0][0]) return k[0][1];
+export function kfValue(k, t) {
+  if (t <= k[0][0]) return k[0][1];
   for (let i = 1; i < k.length; i++) {
-    if (u <= k[i][0]) {
-      const [u0, v0, e] = k[i - 1], [u1, v1] = k[i];
-      return u1 === u0 ? v1 : v0 + (v1 - v0) * easeFn(e, (u - u0) / (u1 - u0));
+    if (t <= k[i][0]) {
+      const [t0, v0, e] = k[i - 1], [t1, v1] = k[i];
+      return t1 === t0 ? v1 : v0 + (v1 - v0) * easeFn(e, (t - t0) / (t1 - t0));
     }
   }
   return k[k.length - 1][1];
 }
-// index of the point that starts the stretch containing u (-1 before the first point or after the last)
-function segStart(k, u) {
-  for (let i = 0; i < k.length - 1; i++) if (u >= k[i][0] - 1e-9 && u < k[i + 1][0] - 1e-9) return i;
+// index of the point that starts the stretch containing t (-1 before the first point or after the last)
+function segStart(k, t) {
+  for (let i = 0; i < k.length - 1; i++) if (t >= k[i][0] - 1 && t < k[i + 1][0] - 1) return i;
   return -1;
 }
 // easing of the stretch under the playhead, taken from the first animated property
 export function easeAt(c, t) {
-  const u = clamp((t - c.start) / Math.max(1, c.dur), 0, 1);
+  const tt = clamp(t - c.start, 0, c.dur);
   for (const p of KF_PROPS) {
     const k = kfTrack(c, p);
     if (!k || k.length < 2) continue;
-    const i = segStart(k, u);
+    const i = segStart(k, tt);
     if (i >= 0) return k[i][2] || '';
   }
   return null; // no stretch to ease here
 }
 // set the easing of the stretch under the playhead for every animated property
 export function setEaseAt(c, t, e) {
-  const u = clamp((t - c.start) / Math.max(1, c.dur), 0, 1);
+  const tt = clamp(t - c.start, 0, c.dur);
   for (const p of KF_PROPS) {
     const k = kfTrack(c, p);
     if (!k || k.length < 2) continue;
-    const i = segStart(k, u);
+    const i = segStart(k, tt);
     if (i < 0) continue;
     k[i] = e ? [k[i][0], k[i][1], e] : [k[i][0], k[i][1]];
   }
 }
 export function propAt(c, p, t) {
   const k = kfTrack(c, p);
-  return k ? kfValue(k, clamp((t - c.start) / Math.max(1, c.dur), 0, 1)) : baseVal(c, p);
+  return k ? kfValue(k, clamp(t - c.start, 0, c.dur)) : baseVal(c, p);
 }
-const KF_TOL = 0.004; // keyframes closer than this (fraction of the clip) count as the same one
+const KF_TOL_US = 50000; // keyframes closer than this (50 ms) count as the same one
 export function kfIndexAt(c, p, t) {
   const k = kfTrack(c, p);
   if (!k) return -1;
-  const u = (t - c.start) / Math.max(1, c.dur);
-  return k.findIndex(([x]) => Math.abs(x - u) < KF_TOL);
+  const tt = clamp(t - c.start, 0, c.dur);
+  return k.findIndex(([x]) => Math.abs(x - tt) < KF_TOL_US);
 }
 export function hasKfAt(c, p, t) { return kfIndexAt(c, p, t) >= 0; }
 export function anyKf(c) { return KF_PROPS.some((p) => kfTrack(c, p)); }
-function putKf(c, p, u, v) {
+function putKf(c, p, t, v) {
   c.kf = c.kf || {};
   const k = c.kf[p] = c.kf[p] || [];
-  const i = k.findIndex(([x]) => Math.abs(x - u) < KF_TOL);
+  const tt = clamp(t - c.start, 0, c.dur);
+  const i = k.findIndex(([x]) => Math.abs(x - tt) < KF_TOL_US);
   if (i >= 0) { k[i][1] = v; return; }
   // a new point splits a stretch: it keeps that stretch's easing
-  const s = k.length > 1 ? segStart(k, u) : -1;
+  const s = k.length > 1 ? segStart(k, tt) : -1;
   const e = s >= 0 ? k[s][2] : '';
-  k.push(e ? [u, v, e] : [u, v]);
+  k.push(e ? [tt, v, e] : [tt, v]);
   k.sort((a, b) => a[0] - b[0]);
 }
 // change a property at the playhead: edits or adds a keyframe when the property is animated
 export function setPropAt(c, p, t, v) {
-  if (kfTrack(c, p)) putKf(c, p, clamp((t - c.start) / Math.max(1, c.dur), 0, 1), v);
+  if (kfTrack(c, p)) putKf(c, p, t, v);
   else setBase(c, p, v);
 }
 // the diamond button: add a keyframe here with the current value, or remove the one here
 export function toggleKf(c, p, t) {
-  const u = clamp((t - c.start) / Math.max(1, c.dur), 0, 1);
   const i = kfIndexAt(c, p, t);
-  if (i < 0) { putKf(c, p, u, propAt(c, p, t)); return; }
+  if (i < 0) { putKf(c, p, t, propAt(c, p, t)); return; }
   const k = c.kf[p];
   if (k.length === 1) setBase(c, p, k[0][1]);
   k.splice(i, 1);
@@ -486,17 +488,22 @@ export function dropKf(c, props) {
   for (const p of props) delete c.kf[p];
   if (!Object.keys(c.kf).length) delete c.kf;
 }
-export function cropKf(c, u0, u1) {
+// crop keyframes to the absolute timeline range [t0, t1], re-basing so the first kept point is at 0
+// (relative to the new clip start). Used by split / trim / freeze frame.
+export function cropKf(c, t0, t1) {
   if (!c.kf) return null;
-  const span = Math.max(1e-6, u1 - u0), out = {};
+  const a = c.start, b = clipEnd(c);
+  t0 = clamp(t0, a, b) - a;
+  t1 = clamp(t1, a, b) - a;
+  const span = Math.max(1, t1 - t0), out = {};
   for (const p of KF_PROPS) {
     const k = kfTrack(c, p);
     if (!k) continue;
-    const s0 = segStart(k, u0);
+    const s0 = segStart(k, t0);
     const e0 = s0 >= 0 ? k[s0][2] : '';
-    const pts = [e0 ? [0, kfValue(k, u0), e0] : [0, kfValue(k, u0)]];
-    for (const [x, v, e] of k) if (x > u0 + 1e-6 && x < u1 - 1e-6) pts.push(e ? [(x - u0) / span, v, e] : [(x - u0) / span, v]);
-    pts.push([1, kfValue(k, u1)]);
+    const pts = [e0 ? [0, kfValue(k, t0), e0] : [0, kfValue(k, t0)]];
+    for (const [x, v, e] of k) if (x > t0 + 1 && x < t1 - 1) pts.push(e ? [x - t0, v, e] : [x - t0, v]);
+    pts.push([span, kfValue(k, t1)]);
     out[p] = pts;
   }
   return Object.keys(out).length ? out : null;
@@ -538,7 +545,7 @@ export function freezeFrame(clipId, t, secs = 2) {
       c.speed = curveAvg(lc);
     }
     if (c.kf) {
-      const rk = cropKf(c, u, 1), lk = cropKf(c, 0, u);
+      const rk = cropKf(c, t, clipEnd(c)), lk = cropKf(c, c.start, t);
       if (rk) right.kf = rk; else delete right.kf;
       if (lk) c.kf = lk; else delete c.kf;
     }

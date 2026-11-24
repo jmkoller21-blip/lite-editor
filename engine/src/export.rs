@@ -58,8 +58,9 @@ fn esc_path(p: &str) -> String {
 }
 
 /// Piecewise-linear FFmpeg expression of a keyframe track. `tvar` is an expression for seconds
-/// since the start of the window; `skip_s` shifts it to seconds since the clip start.
-fn kf_expr(pts: &[crate::model::KfPt], clip_dur_s: f64, tvar: &str, skip_s: f64) -> String {
+/// since the start of the window; `skip_s` shifts it to seconds since the clip start. Keyframe times
+/// in `pts` are already in seconds from the clip start (CapCut basis: absolute time, not 0..1).
+fn kf_expr(pts: &[crate::model::KfPt], tvar: &str, skip_s: f64) -> String {
     if pts.len() == 1 {
         return format!("({:.5})", pts[0].1);
     }
@@ -67,9 +68,8 @@ fn kf_expr(pts: &[crate::model::KfPt], clip_dur_s: f64, tvar: &str, skip_s: f64)
     let last = pts[pts.len() - 1];
     let mut e = format!("{:.5}", last.1);
     for i in (0..pts.len() - 1).rev() {
-        let (u0, v0, ease) = pts[i];
-        let (u1, v1, _) = pts[i + 1];
-        let (t0, t1) = (u0 * clip_dur_s, u1 * clip_dur_s);
+        let (t0, v0, ease) = pts[i];
+        let (t1, v1, _) = pts[i + 1];
         let seg = if t1 - t0 < 1e-6 {
             format!("{:.5}", v1)
         } else {
@@ -86,7 +86,7 @@ fn kf_expr(pts: &[crate::model::KfPt], clip_dur_s: f64, tvar: &str, skip_s: f64)
         e = format!("if(lt({},{:.6}),{},{})", tau, t1, seg, e);
     }
     // before the first keyframe the value stays at the first one
-    format!("if(lt({},{:.6}),{:.5},{})", tau, pts[0].0 * clip_dur_s, pts[0].1, e)
+    format!("if(lt({},{:.6}),{:.5},{})", tau, pts[0].0, pts[0].1, e)
 }
 
 const CURVE_SEGS: i64 = 24;
@@ -307,8 +307,8 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                             }
                             if let Some(sm) = shape {
                                 // an animated mask works its position and size out per frame from the keyframes
-                                let (cd, sk) = (c.dur as f64 / 1e6, wn.skip as f64 / 1e6);
-                                let ke = |p: &Vec<crate::model::KfPt>| if p.is_empty() { None } else { Some(kf_expr(p, cd, "T", sk)) };
+                                let sk = wn.skip as f64 / 1e6;
+                                let ke = |p: &Vec<crate::model::KfPt>| if p.is_empty() { None } else { Some(kf_expr(p, "T", sk)) };
                                 let animated = !(c.kf.mask_x.is_empty() && c.kf.mask_y.is_empty() && c.kf.mask_w.is_empty() && c.kf.mask_h.is_empty());
                                 // the shape is evaluated per pixel; a smaller picture keeps the animated case fast
                                 let size = if animated { "320x180" } else { "640x360" };
@@ -348,7 +348,7 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                             );
                         } else if !c.kf.scale.is_empty() {
                             // animated scale: per-frame resize, applied last (see zoom note above)
-                            let ex = kf_expr(&c.kf.scale, c.dur as f64 / 1e6, "t", wn.skip as f64 / 1e6);
+                            let ex = kf_expr(&c.kf.scale, "t", wn.skip as f64 / 1e6);
                             let _ = write!(
                                 zoom_scale,
                                 "scale=w='max(2,trunc(iw*({e})/2)*2)':h='max(2,trunc(ih*({e})/2)*2)':eval=frame,",
@@ -370,9 +370,9 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                             if kf_bright || kf_sat {
                                 // animated brightness / saturation: `hue` re-reads its expressions every frame.
                                 // Its brightness unit is about 29.4 levels (of 255), so 1.0 of ours is 8.67 of its.
-                                let (cd, sk) = (c.dur as f64 / 1e6, wn.skip as f64 / 1e6);
-                                let be = if kf_bright { format!("clip(({})*8.67,-10,10)", kf_expr(&c.kf.brightness, cd, "t", sk)) } else { format!("{:.4}", (a.brightness * 8.67).clamp(-10.0, 10.0)) };
-                                let se = if kf_sat { format!("clip({},-10,10)", kf_expr(&c.kf.saturation, cd, "t", sk)) } else { format!("{:.4}", a.saturation) };
+                                let sk = wn.skip as f64 / 1e6;
+                                let be = if kf_bright { format!("clip(({})*8.67,-10,10)", kf_expr(&c.kf.brightness, "t", sk)) } else { format!("{:.4}", (a.brightness * 8.67).clamp(-10.0, 10.0)) };
+                                let se = if kf_sat { format!("clip({},-10,10)", kf_expr(&c.kf.saturation, "t", sk)) } else { format!("{:.4}", a.saturation) };
                                 let _ = write!(f, "format={},", yuv_fmt);
                                 if (a.contrast - 1.0).abs() > 0.001 {
                                     let _ = write!(f, "lutyuv=y='clip((val-128)*{:.4}+128,0,255)',", a.contrast);
@@ -400,7 +400,7 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                         }
                         f.push_str("format=rgba,");
                         if !c.kf.opacity.is_empty() {
-                            let ex = kf_expr(&c.kf.opacity, c.dur as f64 / 1e6, "T", wn.skip as f64 / 1e6);
+                            let ex = kf_expr(&c.kf.opacity, "T", wn.skip as f64 / 1e6);
                             let _ = write!(f, "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*clip({},0,1)',", ex);
                         } else if c.opacity < 0.999 {
                             let _ = write!(f, "colorchannelmixer=aa={:.4},", c.opacity);
@@ -409,7 +409,7 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                             // fixed square canvas big enough for any angle and scale, so the size never changes mid-stream
                             let max_s = c.kf.scale.iter().map(|p| p.1).fold(c.scale, f64::max).clamp(1.0, 4.0);
                             let side = ((((w * w + h * h) as f64).sqrt() * max_s / 2.0).ceil() * 2.0) as i64;
-                            let ex = kf_expr(&c.kf.rot, c.dur as f64 / 1e6, "t", wn.skip as f64 / 1e6);
+                            let ex = kf_expr(&c.kf.rot, "t", wn.skip as f64 / 1e6);
                             let _ = write!(f, "rotate=a='({})*PI/180':ow={}:oh={}:c=black@0,", ex, side, side);
                         } else if c.rot.abs() > 0.01 {
                             let rad = c.rot.to_radians();
@@ -434,10 +434,10 @@ pub fn plan(p: &Project, s: &Settings, t0: i64, t1: i64) -> Result<Plan, String>
                         let (mut xe, mut ye) = (format!("(W-w)/2+({:.3})", cx), format!("(H-h)/2+({:.3})", cy));
                         let tl = format!("(t-{:.6})", wn.start as f64 / 1e6);
                         if !c.kf.x.is_empty() {
-                            xe = format!("(W-w)/2+({})*{:.5}", kf_expr(&c.kf.x, c.dur as f64 / 1e6, &tl, wn.skip as f64 / 1e6), k);
+                            xe = format!("(W-w)/2+({})*{:.5}", kf_expr(&c.kf.x, &tl, wn.skip as f64 / 1e6), k);
                         }
                         if !c.kf.y.is_empty() {
-                            ye = format!("(H-h)/2+({})*{:.5}", kf_expr(&c.kf.y, c.dur as f64 / 1e6, &tl, wn.skip as f64 / 1e6), k);
+                            ye = format!("(H-h)/2+({})*{:.5}", kf_expr(&c.kf.y, &tl, wn.skip as f64 / 1e6), k);
                         }
                         if let Some(t) = wn.trans {
                             let d = t.dur.min(c.dur) as f64 / 1e6;
@@ -591,7 +591,7 @@ fn audio_chain(g: &mut String, idx: usize, c: &Clip, wn: &Win, labels: &mut Vec<
     }
     if !c.kf.volume.is_empty() {
         // animated volume: re-evaluated every frame, on the clip's own timeline
-        let ex = kf_expr(&c.kf.volume, c.dur as f64 / 1e6, "t", wn.skip as f64 / 1e6);
+        let ex = kf_expr(&c.kf.volume, "t", wn.skip as f64 / 1e6);
         let _ = write!(f, "volume=volume='max(0,{})':eval=frame:precision=float,", ex);
     } else if (c.volume - 1.0).abs() > 0.001 {
         let _ = write!(f, "volume={:.4},", c.volume);

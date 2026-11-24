@@ -182,7 +182,7 @@ impl Mask {
     }
 }
 
-/// One keyframe: position along the clip (0..1), value, and the easing of the stretch up to the
+/// One keyframe: time in seconds from the clip start, value, and the easing of the stretch up to the
 /// next keyframe (0 linear, 1 smooth, 2 ease in, 3 ease out, 4 hold).
 pub type KfPt = (f64, f64, u8);
 
@@ -223,7 +223,8 @@ fn parse_kf_track(j: Option<&Json>) -> Vec<KfPt> {
                     return None;
                 }
                 let e = a.get(2).and_then(|x| x.as_str()).map(parse_ease).unwrap_or(0);
-                Some((a[0].as_f64()?.clamp(0.0, 1.0), a[1].as_f64()?, e))
+                // the UI sends microseconds; convert to seconds
+                Some((a[0].as_f64()?.max(0.0) / 1_000_000.0, a[1].as_f64()?, e))
             })
             .collect(),
         None => Vec::new(),

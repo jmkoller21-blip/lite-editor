@@ -255,7 +255,7 @@ fn keyframes_move_scale_rotate_and_fade() {
       "media":[{{"id":"m1","path":"{red}","kind":"video","dur":2000000,"w":640,"h":360,"has_audio":false}}],
       "tracks":[{{"id":"v1","kind":"video","clips":[
         {{"id":"c1","media":"m1","start":0,"dur":2000000,"in":0,"speed":1,
-          "kf":{{"x":[[0,-200],[1,200]],"scale":[[0,0.3],[1,0.3]],"rot":[[0,0],[1,45]],"opacity":[[0,1],[1,1]]}}}}]}}]}}"##, red = red);
+          "kf":{{"x":[[0,-200],[2000000,200]],"scale":[[0,0.3],[2000000,0.3]],"rot":[[0,0],[2000000,45]],"opacity":[[0,1],[2000000,1]]}}}}]}}]}}"##, red = red);
     let p = Project::from_json(&Json::parse(&j).unwrap()).unwrap();
     let out = run_export(&p, &dir, "kf", false).unwrap_or_else(|e| panic!("keyframe export failed: {}", e));
     let early = pixel(&out, 0.1, 320, 180);
@@ -274,9 +274,9 @@ fn keyframe_easing_changes_the_motion() {
     let red = gen(&dir, "kfease.mp4", "color=c=red", 2, false);
     let mk = |ease: &str| {
         let kf = if ease.is_empty() {
-            r#"{"x":[[0,-200],[1,200]],"scale":[[0,0.3],[1,0.3]]}"#.to_string()
+            r#"{"x":[[0,-200],[2000000,200]],"scale":[[0,0.3],[2000000,0.3]]}"#.to_string()
         } else {
-            format!(r#"{{"x":[[0,-200,"{}"],[1,200]],"scale":[[0,0.3],[1,0.3]]}}"#, ease)
+            format!(r#"{{"x":[[0,-200,"{}"],[2000000,200]],"scale":[[0,0.3],[2000000,0.3]]}}"#, ease)
         };
         format!(r##"{{
           "name":"k","width":640,"height":360,"fps":30,
@@ -404,7 +404,7 @@ fn keyframes_for_volume_colour_and_mask() {
 
     // saturation: red fades to grey
     let red = gen(&dir, "kfsat.mp4", "color=c=red", 2, false);
-    let p = one_clip_project(&red, false, r#""kf":{"saturation":[[0,1],[1,0]]}"#);
+    let p = one_clip_project(&red, false, r#""kf":{"saturation":[[0,1],[2000000,0]]}"#);
     let out = run_export(&p, &dir, "kf_sat", false).unwrap_or_else(|e| panic!("saturation keyframe export failed: {}", e));
     let early = pixel(&out, 0.1, 320, 180);
     let late = pixel(&out, 1.9, 320, 180);
@@ -413,7 +413,7 @@ fn keyframes_for_volume_colour_and_mask() {
 
     // brightness: grey gets darker at the start than at the end
     let grey = gen(&dir, "kfbri.mp4", "color=c=gray", 2, false);
-    let p = one_clip_project(&grey, false, r#""kf":{"brightness":[[0,-0.5],[1,0.5]]}"#);
+    let p = one_clip_project(&grey, false, r#""kf":{"brightness":[[0,-0.5],[2000000,0.5]]}"#);
     let out = run_export(&p, &dir, "kf_bri", false).unwrap_or_else(|e| panic!("brightness keyframe export failed: {}", e));
     let early = pixel(&out, 0.1, 320, 180);
     let late = pixel(&out, 1.9, 320, 180);
@@ -421,7 +421,7 @@ fn keyframes_for_volume_colour_and_mask() {
 
     // volume: silent at the start, full at the end
     let tone = gen(&dir, "kfvol.mp4", "color=c=black", 2, true);
-    let p = one_clip_project(&tone, true, r#""kf":{"volume":[[0,0],[1,1]]}"#);
+    let p = one_clip_project(&tone, true, r#""kf":{"volume":[[0,0],[2000000,1]]}"#);
     let out = run_export(&p, &dir, "kf_vol", true).unwrap_or_else(|e| panic!("volume keyframe export failed: {}", e));
     let quiet = mean_volume(&out, 0.0, 0.3);
     let loud = mean_volume(&out, 1.6, 0.3);
@@ -429,7 +429,7 @@ fn keyframes_for_volume_colour_and_mask() {
 
     // mask: a narrow window slides from the left edge to the right edge
     let red2 = gen(&dir, "kfmask.mp4", "color=c=red", 2, false);
-    let p = one_clip_project(&red2, false, r#""mask":{"shape":"rect","x":0,"y":0,"w":0.3,"h":1.5,"feather":0.02},"kf":{"mask_x":[[0,-0.4],[1,0.4]]}"#);
+    let p = one_clip_project(&red2, false, r#""mask":{"shape":"rect","x":0,"y":0,"w":0.3,"h":1.5,"feather":0.02},"kf":{"mask_x":[[0,-0.4],[2000000,0.4]]}"#);
     let out = run_export(&p, &dir, "kf_mask", false).unwrap_or_else(|e| panic!("mask keyframe export failed: {}", e));
     let (l0, r0) = (pixel(&out, 0.1, 80, 180), pixel(&out, 0.1, 560, 180));
     let (l1, r1) = (pixel(&out, 1.9, 80, 180), pixel(&out, 1.9, 560, 180));
